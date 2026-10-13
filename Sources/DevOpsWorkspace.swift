@@ -43,7 +43,7 @@ struct DevOpsView: View {
                         }
                         if model.monitors.isEmpty {
                             SettingsSection("Connect your build and monitoring services") {
-                                Text("Add a monitor, paste a provider link during setup, or import your Barklarm configuration. Test access before enabling monitoring.")
+                                Text("Connect GitHub, GitLab or Azure DevOps with an access token, then choose what to monitor. Other services and configuration imports are also available.")
                                 HStack { Button("Set up a provider") { editor = DevOpsMonitor(type: "githubAction", fields: [:]) }; Button("Import configuration…", action: importFile) }.disabled(!model.loaded)
                             }
                         } else if visible.isEmpty { Text("No monitors match these filters.").foregroundStyle(.secondary) }
@@ -62,9 +62,13 @@ struct DevOpsView: View {
                 guard model.loaded, urls.count == 1, let url = urls.first, let monitor = try? DevOpsSetup.fromLink(url.absoluteString) else { return false }
                 editor = monitor; return true
             }
-            .sheet(item: $editor) { draft in DevOpsSetupView(initial: draft, existing: model.monitors.contains { $0.id == draft.id }) { monitor in
-                try model.save(model.monitors.filter { $0.id != monitor.id } + [monitor])
-            } }
+            .sheet(item: $editor) { draft in
+                if model.monitors.contains(where: { $0.id == draft.id }) {
+                    DevOpsSetupView(initial: draft, existing: true) { monitor in try model.save(model.monitors.filter { $0.id != monitor.id } + [monitor]) }
+                } else {
+                    DevOpsConnectView(initial: draft) { monitor in try model.save(model.monitors + [monitor]) }
+                }
+            }
             .sheet(item: $issue) { value in
                 VStack(alignment: .leading, spacing: 18) {
                     Text("Create issue").font(.title2.bold())
@@ -160,6 +164,140 @@ struct DevOpsView: View {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do { let data = try JSONEncoder().encode(model.configuration.template()); try data.write(to: url, options: .atomic); try FileManager.default.setAttributes([.posixPermissions:0o600], ofItemAtPath: url.path); model.message = "Credential-free template exported." }
         catch { model.message = "Could not export the template." }
+    }
+}
+
+struct DevOpsConnectView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var draft: DevOpsMonitor
+    @State private var resources: [DevOpsChoice] = []
+    @State private var builds: [DevOpsChoice] = []
+    @State private var resourceID = ""
+    @State private var buildID = ""
+    @State private var search = ""
+    @State private var connected = false
+    @State private var busy = false
+    @State private var feedback = ""
+    @State private var page = 1
+    @State private var more = false
+    @State private var advanced = false
+    let save: (DevOpsMonitor) throws -> Void
+    init(initial: DevOpsMonitor, save: @escaping (DevOpsMonitor) throws -> Void) {
+        var value = initial
+        if value.type == "gitlab", value.fields["url"] == nil { value.fields["url"] = "https://gitlab.com" }
+        _draft = State(initialValue: value); self.save = save
+    }
+    var body: some View {
+        if advanced || !DevOpsAccountSetup.supported(draft.type) {
+            DevOpsSetupView(initial: draft, existing: false, save: save)
+        } else {
+            VStack(alignment: .leading, spacing: 18) {
+                Text("Connect a build service").font(.title2.bold())
+                Picker("Provider", selection: $draft.type) {
+                    ForEach(DevOpsProvider.types, id: \.self) { Text(DevOpsProvider.title($0)).tag($0) }
+                }.disabled(busy)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        if !connected {
+                            if draft.type == "azureDevOps" {
+                                TextField("Organization URL, e.g. https://dev.azure.com/my-org", text: field("orgUrl"))
+                            }
+                            if draft.type == "gitlab" { TextField("GitLab server", text: field("url")) }
+                            SecureField("Personal access token", text: field("authToken"))
+                            Text(tokenHelp).font(.caption).foregroundStyle(.secondary)
+                            Button("Connect", action: connect).disabled((draft.fields["authToken"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            Button("Use a provider link or configure manually") { advanced = true }
+                        } else {
+                            HStack { Label("Connected", systemImage: "checkmark.circle"); Spacer(); Button("Change account") { reset() } }
+                            TextField("Find a repository or project", text: $search)
+                            Picker(draft.type == "githubAction" ? "Repository" : "Project", selection: $resourceID) {
+                                Text("Choose…").tag("")
+                                ForEach(resources.filter { search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) }) { Text($0.title).tag($0.id) }
+                            }
+                            if more { Button("Load more repositories or projects") { loadResources(nextPage: page + 1) } }
+                            if draft.type == "azureDevOps", resources.count == 100 {
+                                Text("Showing the first 100 projects. Use manual setup if your project is not listed.").font(.caption)
+                                Button("Manual setup") { advanced = true }
+                            }
+                            if !resourceID.isEmpty, draft.type != "gitlab" {
+                                Picker(draft.type == "githubAction" ? "Workflow" : "Pipeline", selection: $buildID) {
+                                    Text("Choose…").tag("")
+                                    ForEach(builds) { Text($0.title).tag($0.id) }
+                                }
+                                if builds.count == 100 { Text("Showing the first 100 builds. Additional builds are available through manual setup.").font(.caption); Button("Manual setup") { advanced = true } }
+                            }
+                            if !resourceID.isEmpty { TextField("Display name", text: field("alias")) }
+                            Text("Your token is saved in this Mac's Keychain when you add the monitor.").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }.disabled(busy)
+                }.frame(minHeight: 240, maxHeight: 420)
+                if !feedback.isEmpty { Text(feedback).font(.caption).foregroundStyle(.secondary) }
+                HStack {
+                    Button("Cancel") { dismiss() }.disabled(busy); Spacer()
+                    if busy { ProgressView().controlSize(.small) }
+                    Button("Add monitor", action: finish).disabled(busy || !connected || resourceID.isEmpty || (draft.type != "gitlab" && buildID.isEmpty))
+                }
+            }.padding(24).frame(width: 620)
+                .onChange(of: draft.type) { _, type in reset(); draft.fields = DevOpsSetup.defaults(type) }
+                .onChange(of: resourceID) { _, id in selectResource(id) }
+                .onChange(of: buildID) { _, id in
+                    if let key = DevOpsDiscovery.field(draft.type) { draft.fields[key] = id }
+                    if let build = builds.first(where: { $0.id == id }), let resource = resources.first(where: { $0.id == resourceID }) { draft.fields["alias"] = resource.title + " / " + build.title }
+                }
+        }
+    }
+    private var tokenHelp: String {
+        switch draft.type {
+        case "githubAction": return "Choose a fine-grained GitHub token with Actions: Read access to your repositories."
+        case "gitlab": return "Use a GitLab personal access token with read_api access."
+        default: return "Use an Azure DevOps token with Project and Team: Read and Build: Read access."
+        }
+    }
+    private func field(_ key: String) -> Binding<String> { Binding(get: { draft.fields[key] ?? "" }, set: { draft.fields[key] = $0 }) }
+    private func reset() { connected = false; resources = []; builds = []; resourceID = ""; buildID = ""; feedback = ""; search = ""; page = 1; more = false }
+    private func connect() {
+        draft.fields["authToken"] = (draft.fields["authToken"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        loadResources(nextPage: 1)
+    }
+    private func loadResources(nextPage: Int) {
+        busy = true; feedback = "Connecting…"; let value = draft
+        Task { @MainActor in
+            defer { busy = false }
+            do {
+                let data = try await DevOpsHTTP().fetch(DevOpsAccountSetup.request(value, page: nextPage))
+                let items = try DevOpsAccountSetup.choices(data, type: value.type)
+                let known = Set(resources.map(\.id))
+                resources = nextPage == 1 ? items : resources + items.filter { !known.contains($0.id) }
+                connected = true; page = nextPage; more = items.count == 100 && value.type != "azureDevOps"
+                feedback = resources.isEmpty ? "Connected, but no accessible repositories or projects were returned. Check the token's access." : "Choose what you want to monitor."
+            } catch { feedback = "Could not connect. Check your token, read permissions and server address." }
+        }
+    }
+    private func selectResource(_ id: String) {
+        builds = []; buildID = ""
+        guard let choice = resources.first(where: { $0.id == id }), let selected = try? DevOpsAccountSetup.select(choice, monitor: draft) else { return }
+        draft = selected
+        guard draft.type != "gitlab" else { feedback = "The latest pipeline in this project will be monitored."; return }
+        busy = true; feedback = "Loading builds…"; let value = draft
+        Task { @MainActor in
+            defer { busy = false }
+            do {
+                let data = try await DevOpsHTTP().fetch(DevOpsDiscovery.request(value))
+                builds = try DevOpsDiscovery.choices(data, type: value.type)
+                feedback = builds.isEmpty ? "No workflows or pipelines found. Check read permissions or choose another project." : "Choose a workflow or pipeline."
+            } catch { feedback = "Could not load builds. Check the token's build read permissions." }
+        }
+    }
+    private func finish() {
+        busy = true; feedback = "Verifying monitoring access…"; var value = draft; value.enabled = true
+        Task { @MainActor in
+            defer { busy = false }
+            do {
+                // Successful access is separate from build health; new projects may have no runs yet.
+                _ = try await DevOpsHTTP().fetch(DevOpsAdapter.request(value))
+                try save(value); dismiss()
+            } catch { feedback = "Could not add this monitor. Check build read permissions and Keychain access." }
+        }
     }
 }
 

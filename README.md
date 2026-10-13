@@ -297,12 +297,26 @@ The cask is named `infravibe`. The stable artifact retains the `InfraProxy.app` 
 ## DevOps monitoring
 
 Open **DevOps** in Operations, or click **DevOps** in the menu panel. infravibe
-includes native monitoring adapted from Barklarm: GitHub Actions, Azure DevOps,
+includes native monitoring adapted from Barklarm: GitHub Actions, GitLab, Azure DevOps,
 Bitbucket Pipelines, CCTray, Datadog, Sentry, New Relic, Opsgenie, Graylog and Grafana.
-Use **Add monitor** for guided provider setup, credential guidance, resource discovery,
-a connection test and a final review. Paste a supported provider link into setup or
-drop it onto DevOps. Group, search, filter, edit, duplicate, mute or pause monitors.
-Discovery shows the first page; direct resource entry remains available.
+Use **Add monitor**, choose GitHub, GitLab or Azure DevOps, paste a personal access
+token and click **Connect**. Choose a repository or project, then a workflow or
+pipeline (GitLab monitors the project's latest pipeline). Click **Add monitor**;
+access is verified and the token is saved in Keychain. Azure DevOps also needs your
+organization URL; GitLab defaults to gitlab.com and supports your own HTTPS server.
+GitHub tokens need Actions read access, GitLab tokens need read_api, and Azure
+DevOps tokens need Project and Team read plus Build read access. Browser sign-in
+is planned separately and is not available yet.
+GitHub and GitLab can load additional pages of repositories/projects. Azure project
+and build discovery shows up to 100 items; manual setup supports additional IDs.
+Manual provider setup and link import remain available for other services and
+public GitHub workflows without tokens. Drop a supported provider link onto DevOps.
+Group, search, filter, edit, duplicate, mute or pause monitors.
+
+Packaged releases starting with 2.11.0 use `infravibe-<version>.dmg` and matching checksums.
+The contained `InfraProxy.app`, bundle identifier and updater signing identity
+remain stable to preserve upgrades. The Homebrew cask references the published
+infravibe download and its verified checksum.
 
 **Settings & backups** configures automatic checks (1–60 minutes), notifications,
 login at startup and a global issue endpoint. Individual monitors can override the

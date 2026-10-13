@@ -26,13 +26,14 @@ struct DevOpsMonitor: Codable, Identifiable, Equatable {
     }
 }
 enum DevOpsProvider {
-    static let types = ["githubAction", "azureDevOps", "bitbucket", "ccTray", "datadogMonitor", "sentry", "newRelic", "opsgenie", "graylog", "grafana"]
+    static let types = ["githubAction", "gitlab", "azureDevOps", "bitbucket", "ccTray", "datadogMonitor", "sentry", "newRelic", "opsgenie", "graylog", "grafana"]
     static func title(_ type: String) -> String {
-        ["githubAction":"GitHub Actions", "azureDevOps":"Azure DevOps", "bitbucket":"Bitbucket Pipelines", "ccTray":"CCTray", "datadogMonitor":"Datadog", "sentry":"Sentry", "newRelic":"New Relic", "opsgenie":"Opsgenie", "graylog":"Graylog", "grafana":"Grafana"][type] ?? type
+        ["githubAction":"GitHub Actions", "gitlab":"GitLab", "azureDevOps":"Azure DevOps", "bitbucket":"Bitbucket Pipelines", "ccTray":"CCTray", "datadogMonitor":"Datadog", "sentry":"Sentry", "newRelic":"New Relic", "opsgenie":"Opsgenie", "graylog":"Graylog", "grafana":"Grafana"][type] ?? type
     }
     static func fields(_ type: String) -> [String] {
         switch type {
         case "githubAction": return ["owner", "repo", "workflowId", "authToken"]
+        case "gitlab": return ["url", "project", "authToken"]
         case "azureDevOps": return ["orgUrl", "project", "pipelineId", "authToken"]
         case "bitbucket": return ["workspace", "repo", "branch", "authToken"]
         case "ccTray": return ["url", "name"]
@@ -108,6 +109,9 @@ enum DevOpsAdapter {
         case "githubAction":
             endpoint = "https://api.github.com/repos/\(try part("owner"))/\(try part("repo"))/actions/workflows/\(try part("workflowId"))/runs?per_page=1"
             bearer(); headers["X-GitHub-Api-Version"] = "2022-11-28"
+        case "gitlab":
+            endpoint = "\(try base("url"))/api/v4/projects/\(try part("project"))/pipelines?per_page=1&order_by=id&sort=desc"
+            headers["PRIVATE-TOKEN"] = try get("authToken")
         case "azureDevOps":
             endpoint = "\(try base("orgUrl"))/\(try part("project"))/_apis/pipelines/\(try part("pipelineId"))/runs?api-version=7.1"
             headers["Authorization"] = "Basic " + Data((":" + (try get("authToken"))).utf8).base64EncodedString()
@@ -155,6 +159,13 @@ enum DevOpsAdapter {
                 let run = try first("workflow_runs"); eventID = (run["id"] as? NSNumber)?.stringValue; link = run["html_url"] as? String
                 if ["queued","in_progress","waiting","pending","requested"].contains(run["status"] as? String ?? "") { health = .running }
                 else { health = run["conclusion"] as? String == "success" ? .healthy : (["failure","timed_out","action_required","startup_failure"].contains(run["conclusion"] as? String ?? "") ? .failed : .unknown) }
+            case "gitlab":
+                guard let rows = json as? [[String:Any]] else { throw DevOpsError.invalidResponse }
+                if let run = rows.first {
+                    eventID = (run["id"] as? NSNumber)?.stringValue; link = run["web_url"] as? String
+                    let status = run["status"] as? String ?? ""
+                    health = status == "success" ? .healthy : (status == "failed" ? .failed : (["created", "waiting_for_resource", "preparing", "pending", "running"].contains(status) ? .running : .unknown))
+                }
             case "azureDevOps":
                 let run = try first("value"); eventID = (run["id"] as? NSNumber)?.stringValue; link = ((run["_links"] as? [String:Any])?["web"] as? [String:Any])?["href"] as? String
                 health = run["state"] as? String == "inProgress" ? .running : (run["result"] as? String == "succeeded" ? .healthy : (run["result"] as? String == "failed" ? .failed : .unknown))

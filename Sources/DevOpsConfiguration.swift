@@ -123,11 +123,12 @@ enum DevOpsSetup {
         throw DevOpsError.invalidConfiguration
     }
     static func defaults(_ type: String) -> [String:String] {
-        switch type { case "datadogMonitor": return ["site":"datadoghq.com"]; case "newRelic": return ["site":"newrelic.com"]; case "opsgenie": return ["host":"opsgenie.com"]; case "bitbucket": return ["branch":"main"]; default: return [:] }
+        switch type { case "gitlab": return ["url":"https://gitlab.com"]; case "datadogMonitor": return ["site":"datadoghq.com"]; case "newRelic": return ["site":"newrelic.com"]; case "opsgenie": return ["host":"opsgenie.com"]; case "bitbucket": return ["branch":"main"]; default: return [:] }
     }
     static func help(_ type: String) -> String {
         switch type {
         case "githubAction": return "Use a fine-grained token with read access to Actions on the selected repository. Public workflows can be read without a token. Paste a workflow page link to fill the repository and workflow."
+        case "gitlab": return "Use a GitLab personal access token with read_api access. Choose a project to monitor its latest pipeline."
         case "azureDevOps": return "Use an Azure DevOps personal access token with Build read access. The organization URL must point to the service you trust."
         case "bitbucket": return "Use a bearer access token with permission to read this repository’s pipelines."
         case "ccTray": return "Use your CI server’s HTTPS CCTray feed. Test it to discover project names. Credentials embedded in URLs are not accepted."
@@ -162,6 +163,65 @@ struct DevOpsIssue: Identifiable {
 }
 
 struct DevOpsChoice: Identifiable { let id: String; let title: String }
+
+// Account discovery lets users select resources without knowing API IDs.
+enum DevOpsAccountSetup {
+    static func supported(_ type: String) -> Bool { ["githubAction", "gitlab", "azureDevOps"].contains(type) }
+    static func request(_ monitor: DevOpsMonitor, page: Int = 1) throws -> URLRequest {
+        guard supported(monitor.type), page > 0, let token = monitor.fields["authToken"], !token.isEmpty else { throw DevOpsError.invalidConfiguration }
+        var headers = ["Accept":"application/json", "User-Agent":"infravibe"]
+        let endpoint: String
+        switch monitor.type {
+        case "githubAction":
+            endpoint = "https://api.github.com/user/repos?per_page=100&sort=full_name&page=\(page)"
+            headers["Authorization"] = "Bearer " + token
+            headers["X-GitHub-Api-Version"] = "2022-11-28"
+        case "gitlab":
+            guard let base = DevOpsAdapter.url(monitor.fields["url"] ?? ""), base.query == nil else { throw DevOpsError.invalidConfiguration }
+            endpoint = base.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/api/v4/projects?membership=true&simple=true&per_page=100&order_by=name&sort=asc&page=\(page)"
+            headers["PRIVATE-TOKEN"] = token
+        case "azureDevOps":
+            guard let base = DevOpsAdapter.url(monitor.fields["orgUrl"] ?? ""), base.query == nil else { throw DevOpsError.invalidConfiguration }
+            endpoint = base.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/_apis/projects?api-version=7.1&$top=100"
+            headers["Authorization"] = "Basic " + Data((":" + token).utf8).base64EncodedString()
+        default: throw DevOpsError.invalidConfiguration
+        }
+        guard let url = DevOpsAdapter.url(endpoint) else { throw DevOpsError.invalidConfiguration }
+        var request = URLRequest(url: url); request.allHTTPHeaderFields = headers
+        return request
+    }
+    static func choices(_ data: Data, type: String) throws -> [DevOpsChoice] {
+        let json = try JSONSerialization.jsonObject(with: data)
+        guard let rows = type == "azureDevOps" ? (json as? [String:Any])?["value"] as? [[String:Any]] : json as? [[String:Any]] else { throw DevOpsError.invalidResponse }
+        var seen: Set<String> = []
+        return rows.compactMap { row -> DevOpsChoice? in
+            let id: String?
+            let title: String?
+            switch type {
+            case "githubAction": id = row["full_name"] as? String; title = id
+            case "gitlab": id = (row["id"] as? NSNumber)?.stringValue; title = row["path_with_namespace"] as? String
+            case "azureDevOps": id = row["id"] as? String; title = row["name"] as? String
+            default: return nil
+            }
+            guard let id, let title, !id.isEmpty, seen.insert(id).inserted else { return nil }
+            return DevOpsChoice(id: id, title: title)
+        }
+    }
+    static func select(_ choice: DevOpsChoice, monitor: DevOpsMonitor) throws -> DevOpsMonitor {
+        var draft = monitor
+        switch draft.type {
+        case "githubAction":
+            let parts = choice.id.split(separator: "/", omittingEmptySubsequences: false)
+            guard parts.count == 2, parts.allSatisfy({ !$0.isEmpty }) else { throw DevOpsError.invalidConfiguration }
+            draft.fields["owner"] = String(parts[0]); draft.fields["repo"] = String(parts[1]); draft.fields.removeValue(forKey: "workflowId")
+        case "azureDevOps": draft.fields["project"] = choice.id; draft.fields.removeValue(forKey: "pipelineId")
+        case "gitlab": draft.fields["project"] = choice.id
+        default: throw DevOpsError.invalidConfiguration
+        }
+        draft.fields["alias"] = choice.title
+        return draft
+    }
+}
 enum DevOpsDiscovery {
     static func field(_ type: String) -> String? {
         ["githubAction":"workflowId", "azureDevOps":"pipelineId", "ccTray":"name", "datadogMonitor":"monitorId", "sentry":"project", "opsgenie":"identifier", "graylog":"streamId", "bitbucket":"branch"][type]

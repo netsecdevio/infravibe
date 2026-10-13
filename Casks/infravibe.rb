@@ -1,10 +1,10 @@
 # frozen_string_literal: true
 
 cask "infravibe" do
-  version "2.10.0"
-  sha256 "a15c54ccd6ac2dfe46c6c5e71b58b992c81af5bc8ffd59528cb587b67f585323"
+  version "2.11.0"
+  sha256 "2d154b92322ddb46409c6bad15ce4cfc840a2c9d9a891b762456081142aa7cdd"
 
-  url "https://github.com/netsecdevio/infravibe/releases/download/v#{version}/InfraProxy-#{version}.dmg"
+  url "https://github.com/netsecdevio/infravibe/releases/download/v#{version}/infravibe-#{version}.dmg"
   name "infravibe"
   desc "Infrastructure, remote terminals, and DevOps monitoring"
   homepage "https://github.com/netsecdevio/infravibe"

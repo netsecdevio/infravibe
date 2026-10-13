@@ -7,8 +7,8 @@ SIGNING_IDENTITY="Developer ID Application: Doug Dowenr (J77629PP5S)"
 KEYCHAIN_PROFILE="InfraProxy"
 BUNDLE_ID="com.dynadobe.infraproxy"
 ENTITLEMENTS="infraproxy.entitlements"
-APP_VERSION="2.10.0"
-APP_BUILD="13"
+APP_VERSION="2.11.0"
+APP_BUILD="14"
 SPARKLE_FEED="https://github.com/netsecdevio/infravibe/releases/latest/download/appcast.xml"
 
 # Parse arguments
