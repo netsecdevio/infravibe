@@ -118,6 +118,9 @@ extension InfraProxyManager {
 
         log(.info, "Starting IA Proxy...")
 
+        userRequestedStop = false
+        autoRestartAttempts = 0
+
         checkTshStatusQuick { [weak self] isLoggedIn in
             if isLoggedIn {
                 self?.startSocksProcess()
@@ -131,6 +134,7 @@ extension InfraProxyManager {
         guard isRunning, let process = socksProcess else { return }
 
         log(.info, "Stopping IA Proxy process")
+        userRequestedStop = true
         process.terminate()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
