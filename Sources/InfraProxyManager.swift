@@ -19,6 +19,14 @@ class InfraProxyManager: NSObject, ObservableObject {
     internal var socksProcess: Process?
     @Published internal var isRunning = false
 
+    // Automatic recovery of an unexpectedly dead SOCKS tunnel (sleep/wake,
+    // network change, certificate expiry). A user-initiated stop must never
+    // restart; everything else retries while Teleport credentials are valid.
+    internal var userRequestedStop = false
+    internal var autoRestartAttempts = 0
+    internal let autoRestartDelays: [TimeInterval] = [2, 5, 10, 30, 60]
+    internal var lastProxyStart: Date = .distantPast
+
     // HTTP Proxy process management
     internal var httpProxyProcess: Process?
     @Published internal var isHttpProxyRunning = false
@@ -68,11 +76,54 @@ class InfraProxyManager: NSObject, ObservableObject {
         remoteAccess.start()
         browserDashboard.manager = self
         startStatusRefresh()
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(systemDidWake),
+            name: NSWorkspace.didWakeNotification, object: nil)
         log(.info, "infravibe started")
+    }
+
+    @objc private func systemDidWake() {
+        // A tunnel that died during sleep leaves no termination to react to
+        // until keepalives count out; recover promptly on wake instead.
+        guard !userRequestedStop, !isRunning, lastProxyStart != .distantPast else { return }
+        log(.info, "System woke with IA Proxy down; attempting restart")
+        autoRestartAttempts = 0
+        attemptAutoRestart()
+    }
+
+    internal func attemptAutoRestart() {
+        // A tunnel that held for ten minutes earns a fresh retry budget.
+        if Date().timeIntervalSince(lastProxyStart) > 600 {
+            autoRestartAttempts = 0
+        }
+        guard autoRestartAttempts < autoRestartDelays.count else {
+            log(.error, "IA Proxy auto-restart gave up after \(autoRestartDelays.count) attempts")
+            showNotification(title: "IA Proxy Down",
+                             message: "Auto-restart gave up; start the IA Proxy manually")
+            return
+        }
+        let delay = autoRestartDelays[autoRestartAttempts]
+        autoRestartAttempts += 1
+        log(.info, "IA Proxy auto-restart attempt \(autoRestartAttempts) in \(Int(delay))s")
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self = self, !self.isRunning, !self.userRequestedStop else { return }
+            self.checkTshStatusQuick { [weak self] isLoggedIn in
+                guard let self = self, !self.isRunning, !self.userRequestedStop else { return }
+                if isLoggedIn {
+                    self.log(.info, "Credentials still valid; restarting SOCKS tunnel")
+                    self.startSocksProcess()
+                } else {
+                    self.log(.error, "IA Proxy down and Teleport session expired; login required")
+                    self.showNotification(title: "Teleport Login Required",
+                                          message: "IA Proxy stopped and the session expired; start it to re-authenticate")
+                }
+            }
+        }
     }
 
     deinit {
         stopStatusRefresh()
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
     }
 
     internal func updateExpiryTitle(_ title: String) {
@@ -663,6 +714,10 @@ class InfraProxyManager: NSObject, ObservableObject {
     }
 
     internal func startSocksProcess() {
+        guard socksProcess?.isRunning != true else {
+            log(.info, "SOCKS tunnel already running; skipping duplicate start")
+            return
+        }
         log(.info, "Already logged in, starting SOCKS directly")
 
         let keepAliveOptions: String
@@ -676,6 +731,7 @@ class InfraProxyManager: NSObject, ObservableObject {
         socksProcess?.launchPath = "/bin/zsh"
         socksProcess?.arguments = ["-l", "-c", "\(configuration.teleport.tshPath) ssh -A -N -D \(configuration.teleport.localPort)\(keepAliveOptions) \(configuration.teleport.jumpboxHost)"]
 
+        lastProxyStart = Date()
         startProcessWithMonitoring()
     }
 
@@ -943,11 +999,18 @@ class InfraProxyManager: NSObject, ObservableObject {
                 self?.isRunning = false
                 self?.rebuildMenu()
 
-                if exitCode == 0 {
-                    self?.showNotification(title: "IA Proxy Stopped", message: "IA Proxy terminated normally")
+                if self?.userRequestedStop == true {
+                    if exitCode == 0 {
+                        self?.showNotification(title: "IA Proxy Stopped", message: "IA Proxy terminated normally")
+                    } else {
+                        self?.log(.error, "IA Proxy failed with exit code: \(exitCode)")
+                        self?.showNotification(title: "IA Proxy Error", message: "Process failed with exit code \(exitCode)")
+                    }
                 } else {
-                    self?.log(.error, "IA Proxy failed with exit code: \(exitCode)")
-                    self?.showNotification(title: "IA Proxy Error", message: "Process failed with exit code \(exitCode)")
+                    // Sleep, a network change or certificate expiry killed the
+                    // tunnel; the user did not. Bring it back.
+                    self?.log(.warning, "IA Proxy exited unexpectedly (code \(exitCode)); scheduling auto-restart")
+                    self?.attemptAutoRestart()
                 }
             }
         }
