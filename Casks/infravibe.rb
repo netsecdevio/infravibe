@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
 cask "infravibe" do
-  version "2.11.0"
-  sha256 "2d154b92322ddb46409c6bad15ce4cfc840a2c9d9a891b762456081142aa7cdd"
+  version "2.12.0"
+  sha256 "fecb26de26f4119d560f9e152a618f29adee317590ec51afed72487985a79cc4"
 
   url "https://github.com/netsecdevio/infravibe/releases/download/v#{version}/infravibe-#{version}.dmg"
   name "infravibe"
