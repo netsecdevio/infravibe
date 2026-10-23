@@ -1,14 +1,12 @@
-# infravibe 2.11.0
+# infravibe 2.12.0
 
-Build-service setup now starts with a token and resource selection instead of manual API fields.
+The SOCKS tunnel now restarts itself after unexpected exits.
 
-- GitHub Actions: connect with a personal access token, choose a repository and workflow, and add the monitor.
-- GitLab: connect to gitlab.com or your own HTTPS server and select a project to monitor its latest pipeline.
-- Azure DevOps: enter your organization URL and token, then choose a project and pipeline.
-- GitHub and GitLab repository/project lists support loading additional pages. Manual setup remains available for other providers and resources outside discovery limits.
-- Tokens stay in macOS Keychain. Monitoring access is checked before saving; browser sign-in is deferred.
-- Release downloads and checksums now use `infravibe-2.11.0.dmg`. The contained app filename, bundle identifier, settings and updater signing identity remain compatible with existing installations.
+- Laptop sleep, a network change, or Teleport certificate expiry used to leave the SOCKS port closed until a manual restart, even with a valid login. Unexpected exits now retry with backoff (2/5/10/30/60 seconds) while Teleport credentials remain valid; the retry budget resets after a tunnel that held for ten minutes.
+- Waking from sleep triggers an immediate recovery check instead of waiting for SSH keepalives to time out. Recovery only engages when a tunnel had been started in the current session.
+- A stop from the menu is remembered as user-requested and never restarts. An expired Teleport session raises a login-required notification instead of retrying.
+- A duplicate-start guard prevents a manual start and a scheduled retry from racing.
 
-Validation includes the Swift suite and fixtures for token discovery, resource selection, GitLab pipeline states and credential-free templates. Private-provider accounts have not been tested live.
+Validation includes the Swift suite and a typecheck-parity check against the previous release. The auto-restart logic has not yet been exercised through a live sleep/wake cycle; report regressions on the repository.
 
-Signed and notarized Universal macOS application for Apple silicon and Intel. Previous release 2.10.0 remains available for rollback.
+Signed and notarized Universal macOS application for Apple silicon and Intel. Previous release 2.11.0 remains available for rollback.
