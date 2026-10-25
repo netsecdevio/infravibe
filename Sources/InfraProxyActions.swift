@@ -197,10 +197,23 @@ extension InfraProxyManager {
             }
         }
 
+        // Preflight the configured program. Launching a folder or a
+        // non-executable file surfaces as "you don't have permission", which
+        // sends the user hunting for a privacy setting that does not exist.
+        let executablePath: String
+        switch HttpProxyExecutable.resolve(configuredPath: configuration.httpProxy.path) {
+        case .ready(let path):
+            executablePath = path
+        case .problem(let problem):
+            log(.error, "HTTP Proxy preflight failed: \(problem.explanation)")
+            guard let repaired = resolveHttpProxyProblem(problem) else { return }
+            executablePath = repaired
+        }
+
         log(.info, "Starting HTTP Proxy...")
 
         httpProxyProcess = Process()
-        httpProxyProcess?.launchPath = configuration.httpProxy.path
+        httpProxyProcess?.launchPath = executablePath
         httpProxyProcess?.arguments = ["-p", configuration.httpProxy.port]
 
         var environment = ProcessInfo.processInfo.environment
@@ -244,6 +257,59 @@ extension InfraProxyManager {
             self?.isHttpProxyRunning = false
             self?.rebuildMenu()
             self?.showNotification(title: "HTTP Proxy Stopped", message: "HTTP Proxy has been stopped")
+        }
+    }
+
+    /// Presents the real cause of a failed HTTP proxy preflight and offers to
+    /// fix it in place. Returns the executable to launch when the user accepts
+    /// a repair, or nil when nothing can be started.
+    ///
+    /// The app never tells the user to go change something by hand when it can
+    /// perform the change itself and ask for confirmation first.
+    internal func resolveHttpProxyProblem(_ problem: HttpProxyExecutable.Problem) -> String? {
+        guard !suppressErrorPopups else {
+            log(.error, "\(problem.title): \(problem.explanation)")
+            return nil
+        }
+
+        let alert = NSAlert()
+        alert.messageText = problem.title
+        alert.alertStyle = .warning
+
+        switch problem.remedy {
+        case .useInstead(let suggestion):
+            alert.informativeText = "\(problem.explanation)\n\nInfraVibe found the launcher at:\n\(suggestion)\n\nUse it and save this as the HTTP proxy program?"
+            alert.addButton(withTitle: "Use This Program")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+            configuration.httpProxy.path = suggestion
+            saveConfiguration()
+            log(.info, "HTTP Proxy program updated to \(suggestion)")
+            return suggestion
+
+        case .makeExecutable(let path):
+            alert.informativeText = "\(problem.explanation)\n\nMark it executable (chmod +x) and start the proxy?"
+            alert.addButton(withTitle: "Make Executable")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+            do {
+                try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path)
+                log(.info, "Marked \(path) executable")
+                return path
+            } catch {
+                showError(message: "Could not mark \(path) executable: \(error.localizedDescription)")
+                return nil
+            }
+
+        case .install(let command):
+            alert.informativeText = "\(problem.explanation)\n\nInstall it with:\n\(command)"
+            alert.addButton(withTitle: "Copy Install Command")
+            alert.addButton(withTitle: "Cancel")
+            if alert.runModal() == .alertFirstButtonReturn {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(command, forType: .string)
+            }
+            return nil
         }
     }
 

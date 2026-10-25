@@ -39,7 +39,7 @@ BUILD_SLICES=$(mktemp -d)
 trap 'rm -rf "$BUILD_SLICES"' EXIT
 for ARCH in arm64 x86_64; do
 swiftc -target "$ARCH-apple-macosx15.5" -o "$BUILD_SLICES/InfraProxy-$ARCH" \
-    Sources/ProxyModels.swift \
+    Sources/ProxyModels.swift Sources/HttpProxyExecutable.swift \
     Sources/LaunchctlServiceManager.swift \
     Sources/InfraProxyManager.swift \
     Sources/InfraProxyActions.swift \
