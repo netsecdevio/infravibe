@@ -427,3 +427,60 @@ print("PASS: issue POST success/failure/redirect rejection, no automatic retry, 
 if let fixturePath = ProcessInfo.processInfo.environment["INFRAVIBE_DEVOPS_BACKUP_FIXTURE"] {
     try backupBytes.write(to:URL(fileURLWithPath:fixturePath),options:.atomic)
 }
+
+// MARK: - HTTP proxy executable resolution
+
+func fakeProbe(_ table: [String: (Bool, Bool, Bool)]) -> (String) -> (exists: Bool, isDirectory: Bool, isExecutable: Bool) {
+    return { path in
+        guard let e = table[path] else { return (false, false, false) }
+        return (e.0, e.1, e.2)
+    }
+}
+
+// A real executable is used as-is.
+let goodProbe = fakeProbe(["/opt/homebrew/bin/hpts": (true, false, true)])
+assert(HttpProxyExecutable.resolve(configuredPath: "/opt/homebrew/bin/hpts", probe: goodProbe) == .ready(path: "/opt/homebrew/bin/hpts"))
+
+// The reported bug: the npm package DIRECTORY was configured. macOS calls that
+// a permission error; the app must name it a folder and offer the launcher.
+let pkg = "/opt/homebrew/lib/node_modules/http-proxy-to-socks"
+let dirProbe = fakeProbe([
+    pkg: (true, true, false),
+    pkg + "/bin/hpts.js": (true, false, true),
+    "/opt/homebrew/bin/hpts": (true, false, true)
+])
+guard case .problem(let dirProblem) = HttpProxyExecutable.resolve(configuredPath: pkg, probe: dirProbe) else {
+    fatalError("expected a problem for a package directory")
+}
+assert(dirProblem == .directory(path: pkg, suggestion: pkg + "/bin/hpts.js"))
+assert(dirProblem.remedy == .useInstead(path: pkg + "/bin/hpts.js"))
+assert(!dirProblem.explanation.lowercased().contains("permission denied"))
+
+// Present but not executable -> offer chmod, not a permission lecture.
+let notExec = fakeProbe(["/usr/local/bin/hpts": (true, false, false)])
+guard case .problem(let bitProblem) = HttpProxyExecutable.resolve(configuredPath: "/usr/local/bin/hpts", probe: notExec) else {
+    fatalError("expected a problem for a non-executable file")
+}
+assert(bitProblem == .notExecutable(path: "/usr/local/bin/hpts"))
+assert(bitProblem.remedy == .makeExecutable(path: "/usr/local/bin/hpts"))
+
+// Nothing installed anywhere -> install instructions.
+guard case .problem(let missing) = HttpProxyExecutable.resolve(configuredPath: "/nope/hpts", probe: fakeProbe([:])) else {
+    fatalError("expected a problem for a missing program")
+}
+assert(missing == .missing(path: "/nope/hpts"))
+if case .install = missing.remedy {} else { fatalError("expected install remedy") }
+
+// Missing path but a working hpts elsewhere -> suggest it rather than giving up.
+let elsewhere = fakeProbe(["/opt/homebrew/bin/hpts": (true, false, true)])
+guard case .problem(let strayProblem) = HttpProxyExecutable.resolve(configuredPath: "/gone/hpts", probe: elsewhere) else {
+    fatalError("expected a problem for a stale path")
+}
+assert(strayProblem.remedy == .useInstead(path: "/opt/homebrew/bin/hpts"))
+
+// Empty setting is handled without crashing.
+guard case .problem = HttpProxyExecutable.resolve(configuredPath: "   ", probe: fakeProbe([:])) else {
+    fatalError("expected a problem for an empty path")
+}
+
+print("PASS: HTTP proxy preflight names the real cause (folder / missing / not executable) and offers a concrete repair")

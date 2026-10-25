@@ -60,7 +60,7 @@ class InfraProxyManager: NSObject, ObservableObject {
     // Prevent rapid menu updates and control error popups
     private var lastMenuUpdate: Date = Date.distantPast
     private let menuUpdateThrottle: TimeInterval = 0.1
-    private var suppressErrorPopups: Bool = false
+    internal var suppressErrorPopups: Bool = false
 
     // Animation state
     private var isAnimating: Bool = false
