@@ -49,14 +49,14 @@ fastlane/screenshots/**/*.png
 fastlane/test_output
 
 .DS_Store
-InfraProxy.app.tar.gz
-InfraProxy.app/*
+infravibe.app.tar.gz
+infravibe.app/*
 
 # Downloaded updater SDK and generated release artifacts
 Vendor/Sparkle/
 dist/
-InfraProxy.zip
-InfraProxy-*.dmg
-InfraProxy-*.dmg.sha256
+Infravibe.zip
+Infravibe-*.dmg
+Infravibe-*.dmg.sha256
 
 Web/node_modules/

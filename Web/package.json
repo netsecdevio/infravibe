@@ -1,7 +1,7 @@
 {
-  "name": "infraproxy-browser",
+  "name": "infravibe-browser",
   "version": "1.0.0",
-  "description": "Pinned browser terminal assets for InfraProxy",
+  "description": "Pinned browser terminal assets for Infravibe",
   "keywords": [],
   "type": "commonjs",
   "dependencies": {

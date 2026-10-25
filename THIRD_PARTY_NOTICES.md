@@ -1,6 +1,6 @@
 # Third-party notices
 
-InfraProxy’s compact menu panel and remote-sharing workflow are inspired by
+infravibe’s compact menu panel and remote-sharing workflow are inspired by
 [VibeTunnel](https://github.com/amantus-ai/vibetunnel), reference commit
 `f78324f5a6f5617711581cf5b119651094b2d9bc`. VibeTunnel is copyright 2025
 Amantus Machina and distributed under the MIT license; its notice is included

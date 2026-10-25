@@ -18,7 +18,7 @@ let large = OperationsCommand.run("/bin/sh", ["-c", "dd if=/dev/zero bs=65536 co
 assert(large.code == 0 && large.output.count == 131076 && large.output.hasSuffix("done"))
 let timedCommand = OperationsCommand.run("/bin/sleep", ["10"], timeout: 0.1)
 assert(timedCommand.code == -1)
-let missing = OperationsCommand.run("/nonexistent/infraproxy", [])
+let missing = OperationsCommand.run("/nonexistent/infravibe", [])
 assert(missing.code == -1)
 let vm = try JSONDecoder().decode(VMInstance.self, from: Data("{\"name\":\"test\",\"zone\":\"projects/demo/zones/us-east1-b\",\"status\":\"RUNNING\"}".utf8))
 assert(vm.shortZone == "us-east1-b")
@@ -81,7 +81,7 @@ func waitForCloud(_ model: GoogleCloudModel) {
     while model.busy && Date() < deadline { _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02)) }
     assert(!model.busy, "Cloud operation did not finish")
 }
-let suiteName = "InfraProxy.Tests." + UUID().uuidString
+let suiteName = "Infravibe.Tests." + UUID().uuidString
 let preferences = UserDefaults(suiteName: suiteName)!
 defer { preferences.removePersistentDomain(forName: suiteName) }
 let fake = FakeCloud()
@@ -484,3 +484,58 @@ guard case .problem = HttpProxyExecutable.resolve(configuredPath: "   ", probe: 
 }
 
 print("PASS: HTTP proxy preflight names the real cause (folder / missing / not executable) and offers a concrete repair")
+
+// Identity migration (2.12.x -> 2.13.0 rename): the support directory copy must never destroy or
+// overwrite user data. Agent grants and terminal history live here, so a wrong branch loses them.
+let migrationRoot = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("infravibe-migration-\(UUID().uuidString)")
+func migrationCase(_ build: (URL) throws -> Void) rethrows -> (notes: [String], root: URL) {
+    let root = migrationRoot.appendingPathComponent(UUID().uuidString)
+    try! FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try build(root)
+    return (IdentityMigration.migrateSupportDirectory(root: root), root)
+}
+func seedLegacy(_ root: URL, _ contents: String) throws {
+    let legacy = root.appendingPathComponent("InfraProxy")
+    try FileManager.default.createDirectory(at: legacy.appendingPathComponent("TerminalHistory"), withIntermediateDirectories: true)
+    try Data(contents.utf8).write(to: legacy.appendingPathComponent("AgentAccess.json"))
+}
+
+// Nothing to migrate: a clean install must stay silent rather than inventing a directory.
+let absent = migrationCase { _ in }
+assert(absent.notes.isEmpty)
+assert(!FileManager.default.fileExists(atPath: absent.root.appendingPathComponent("infravibe").path))
+
+// Legacy present, no new directory: grants and history are carried across, original left intact.
+let copied = try migrationCase { try seedLegacy($0, "{\"grants\":[\"agent-a\"]}") }
+assert(copied.notes == ["copied support directory"])
+let carried = copied.root.appendingPathComponent("infravibe/AgentAccess.json")
+let carriedText = try String(contentsOf: carried, encoding: .utf8)
+assert(carriedText == "{\"grants\":[\"agent-a\"]}")
+assert(FileManager.default.fileExists(atPath: copied.root.appendingPathComponent("infravibe/TerminalHistory").path))
+assert(FileManager.default.fileExists(atPath: copied.root.appendingPathComponent("InfraProxy/AgentAccess.json").path))
+
+// Both present (re-run, or user already on 2.13.0): the newer data must win, never be clobbered.
+let preserved = try migrationCase { root in
+    try seedLegacy(root, "{\"grants\":[\"stale\"]}")
+    try FileManager.default.createDirectory(at: root.appendingPathComponent("infravibe"), withIntermediateDirectories: true)
+    try Data("{\"grants\":[\"current\"]}".utf8).write(to: root.appendingPathComponent("infravibe/AgentAccess.json"))
+}
+assert(preserved.notes == ["support directory already present, left untouched"])
+let preservedText = try String(contentsOf: preserved.root.appendingPathComponent("infravibe/AgentAccess.json"), encoding: .utf8)
+assert(preservedText == "{\"grants\":[\"current\"]}")
+
+// Preferences: legacy values (approved workspaces) carry over; values set after upgrading are kept.
+let currentSuite = "infravibe.test.current.\(UUID().uuidString)"
+let currentDefaults = UserDefaults(suiteName: currentSuite)!
+let legacyDomain: [String: Any] = ["approvedSessionWorkspaces": ["/Users/test/local_projects"], "panelMode": "old", "IdentityMigration.2.13.0.completed": true]
+currentDefaults.set("new", forKey: "panelMode")
+let defaultNotes = IdentityMigration.migrateDefaults(legacyDomain, to: currentDefaults)
+assert(defaultNotes == ["copied 1 preference(s)"])
+assert(currentDefaults.stringArray(forKey: "approvedSessionWorkspaces") == ["/Users/test/local_projects"])
+assert(currentDefaults.string(forKey: "panelMode") == "new")
+assert(currentDefaults.object(forKey: "IdentityMigration.2.13.0.completed") == nil)
+assert(IdentityMigration.migrateDefaults(legacyDomain, to: currentDefaults).isEmpty)
+currentDefaults.removePersistentDomain(forName: currentSuite)
+
+try? FileManager.default.removeItem(at: migrationRoot)
+print("PASS: identity migration copies legacy support data and preferences, is idempotent, and never overwrites existing grants")

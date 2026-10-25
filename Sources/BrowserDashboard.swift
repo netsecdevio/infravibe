@@ -13,14 +13,14 @@ final class BrowserDashboard: ObservableObject {
     private var engine: BrowserEngine?
     private var timer: Timer?
     private var restartPending = false
-    weak var manager: InfraProxyManager?
+    weak var manager: InfravibeManager?
     var localURL: URL? { running ? URL(string: "http://127.0.0.1:\(activePort)") : nil }
     func start() {
         guard !running, !starting, let port = RemoteCommands.port(portText, blocked: []) else { message = "Enter a port between 1 and 65535."; return }
         guard let resources = Bundle.main.resourceURL, let executable = Bundle.main.executableURL else { message = "Application resources unavailable"; return }
         key = BrowserSecurity.token(); starting = true
         manager?.log(.debug, "Starting loopback browser server on port \(port)")
-        let engine = BrowserEngine(assets: resources.appendingPathComponent("Web"), helper: executable.deletingLastPathComponent().appendingPathComponent("TerminalHost"), historyDirectory: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/InfraProxy/TerminalHistory"), agents: manager?.agentAccess ?? AgentAccess(), browserKeys: manager?.browserKeys ?? BrowserKeys())
+        let engine = BrowserEngine(assets: resources.appendingPathComponent("Web"), helper: executable.deletingLastPathComponent().appendingPathComponent("TerminalHost"), historyDirectory: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/infravibe/TerminalHistory"), agents: manager?.agentAccess ?? AgentAccess(), browserKeys: manager?.browserKeys ?? BrowserKeys())
         self.engine = engine
         engine.onSessionEvent = { event, code in
             let defaults = UserDefaults.standard

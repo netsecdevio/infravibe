@@ -10,7 +10,7 @@ Use macOS 15.5 or later, Xcode Command Line Tools with Swift and the macOS SDK, 
 git clone https://github.com/netsecdevio/infravibe.git
 cd infravibe
 bash build.sh
-open InfraProxy.app
+open infravibe.app
 ```
 
 The build downloads pinned Sparkle and npm dependencies and produces a Universal2 application. Ordinary development builds do not require signing credentials or notarization. Signing keys and release credentials belong only to the maintainers; do not request or commit them.
@@ -24,7 +24,7 @@ bash Tests/run.sh
 node --check Web/app.js
 bash build.sh
 python3 Tests/browser-integration.py
-bash scripts/verify-architectures.sh InfraProxy.app
+bash scripts/verify-architectures.sh infravibe.app
 git diff --check
 ```
 
@@ -37,7 +37,7 @@ Fork the repository, create a branch, and keep changes focused. Describe the pro
 Security-sensitive changes require particular care: enforce authorization in code, validate request origins and resource ownership, bound inputs and retained output, and document trust boundaries. Do not represent shell access as sandboxed unless isolation is actually enforced and tested.
 
 The public product is infravibe. Release downloads use `infravibe-<version>.dmg`.
-Legacy `InfraProxy.app` and executable names, bundle IDs, configuration paths, and
+Legacy `infravibe.app` and executable names, bundle IDs, configuration paths, and
 updater signing identities remain compatibility interfaces. Preserve those when
 packaging releases; generate the appcast from the renamed archive and update the
 Homebrew URL and checksum only after that archive is published.

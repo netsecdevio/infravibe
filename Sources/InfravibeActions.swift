@@ -2,8 +2,8 @@ import Cocoa
 import Foundation
 import UserNotifications
 
-// MARK: - InfraProxyManager Actions Extension
-extension InfraProxyManager {
+// MARK: - InfravibeManager Actions Extension
+extension InfravibeManager {
 
     // MARK: - Configuration Management
 
@@ -1271,7 +1271,7 @@ extension InfraProxyManager {
 
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd-HHmmss"
-        savePanel.nameFieldStringValue = "infraproxy-logs-\(formatter.string(from: Date())).txt"
+        savePanel.nameFieldStringValue = "infravibe-logs-\(formatter.string(from: Date())).txt"
 
         if savePanel.runModal() == .OK {
             if let url = savePanel.url {
@@ -1352,14 +1352,14 @@ extension InfraProxyManager {
 }
 
 // MARK: - NSTableViewDataSource
-extension InfraProxyManager: NSTableViewDataSource {
+extension InfravibeManager: NSTableViewDataSource {
     func numberOfRows(in tableView: NSTableView) -> Int {
         return editingServices.count
     }
 }
 
 // MARK: - NSTableViewDelegate
-extension InfraProxyManager: NSTableViewDelegate {
+extension InfravibeManager: NSTableViewDelegate {
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard row < editingServices.count else { return nil }
         let service = editingServices[row]
@@ -1398,7 +1398,7 @@ extension InfraProxyManager: NSTableViewDelegate {
 
 // MARK: - AppDelegate
 class AppDelegate: NSObject, NSApplicationDelegate {
-    var infraProxyManager: InfraProxyManager?
+    var infravibeManager: InfravibeManager?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -1411,20 +1411,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        infraProxyManager = InfraProxyManager()
-        if CommandLine.arguments.contains("--dashboard") { infraProxyManager?.showDashboard() }
-        if CommandLine.arguments.contains("--menu") { DispatchQueue.main.async { self.infraProxyManager?.togglePanel() } }
+        IdentityMigration.runIfNeeded()
+        infravibeManager = InfravibeManager()
+        if CommandLine.arguments.contains("--dashboard") { infravibeManager?.showDashboard() }
+        if CommandLine.arguments.contains("--menu") { DispatchQueue.main.async { self.infravibeManager?.togglePanel() } }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag { infraProxyManager?.togglePanel() }
+        if !flag { infravibeManager?.togglePanel() }
         return true
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        infraProxyManager?.browserDashboard.stop()
-        infraProxyManager?.remoteAccess.shutdown()
-        infraProxyManager?.operations.cloud.cancelLogin()
-        infraProxyManager = nil
+        infravibeManager?.browserDashboard.stop()
+        infravibeManager?.remoteAccess.shutdown()
+        infravibeManager?.operations.cloud.cancelLogin()
+        infravibeManager = nil
     }
 }

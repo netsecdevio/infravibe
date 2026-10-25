@@ -1,6 +1,6 @@
 //
-//  infraproxyApp.swift
-//  infraproxy
+//  infravibeApp.swift
+//  infravibe
 //
 //  Created on 6/9/25.
 //

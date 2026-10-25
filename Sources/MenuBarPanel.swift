@@ -22,7 +22,7 @@ private struct PanelAction: View {
     }
 }
 struct MenuBarPanel: View {
-    @ObservedObject var manager: InfraProxyManager
+    @ObservedObject var manager: InfravibeManager
     @ObservedObject var operations: OperationsModel
     @ObservedObject var remote: RemoteAccessModel
     @AppStorage("interfaceTheme") private var theme: InterfaceTheme = .system

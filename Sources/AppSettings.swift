@@ -41,7 +41,7 @@ enum PreferredTerminal: String, CaseIterable, Identifiable {
     }
 }
 struct AdvancedSettingsView: View {
-    @ObservedObject var manager: InfraProxyManager
+    @ObservedObject var manager: InfravibeManager
     @ObservedObject var updater: AppUpdater
     @AppStorage("preferredTerminal") private var terminal: PreferredTerminal = .terminal
     @AppStorage("debugMode") private var debugMode = false

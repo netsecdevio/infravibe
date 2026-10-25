@@ -3,10 +3,10 @@ import Foundation
 import UserNotifications
 import SwiftUI
 
-class InfraProxyManager: NSObject, ObservableObject {
+class InfravibeManager: NSObject, ObservableObject {
     internal let remoteAccess = RemoteAccessModel()
     internal let browserKeys = BrowserKeys(authorizedFile: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".ssh/authorized_keys"))
-    internal let agentAccess = AgentAccess(file: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/InfraProxy/AgentAccess.json"))
+    internal let agentAccess = AgentAccess(file: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/infravibe/AgentAccess.json"))
     internal let browserDashboard = BrowserDashboard()
     private var menuPopover: NSPopover?
     internal var dashboardWindow: NSWindow?
