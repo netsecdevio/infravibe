@@ -28,6 +28,14 @@ enum RemoteProvider: String, CaseIterable, Identifiable {
     var isPublic: Bool { self != .tailscale }
 }
 enum RemoteCommands {
+    /// Whether a refresh should run `tailscale status`. On macOS the first
+    /// Tailscale candidate is the GUI app binary, and every invocation briefly
+    /// launches a visible Tailscale process, so the background timer must not
+    /// poll it unless a Tailscale tunnel is active, and then only sparingly.
+    static func shouldProbeTailscale(background: Bool, tunnelRunning: Bool, lastProbe: Date, now: Date, minimumInterval: TimeInterval = 60) -> Bool {
+        guard background else { return true }
+        return tunnelRunning && now.timeIntervalSince(lastProbe) >= minimumInterval
+    }
     static func executable(_ name: String) -> String? {
         var candidates = ["/opt/homebrew/bin/" + name, "/usr/local/bin/" + name]
         if name == "tailscale" { candidates.insert("/Applications/Tailscale.app/Contents/MacOS/Tailscale", at: 0) }
@@ -175,6 +183,7 @@ final class RemoteAccessModel: ObservableObject {
     func stopDashboardTunnels(port: Int) { generation += 1; preparing = false; for tunnel in [tailTunnel, cloudTunnel, ngrokTunnel] where tunnel.localPort == port { tunnel.stop() } }
     private var timer: Timer?
     private var generation = 0
+    private var lastTailscaleProbe = Date.distantPast
     private var tunnelChanges = Set<AnyCancellable>()
     init() {
         for tunnel in [tailTunnel, cloudTunnel, ngrokTunnel] {
@@ -183,14 +192,19 @@ final class RemoteAccessModel: ObservableObject {
     }
     func start() {
         refresh()
-        let timer = Timer(timeInterval: 10, repeats: true) { [weak self] _ in self?.refresh() }
+        let timer = Timer(timeInterval: 10, repeats: true) { [weak self] _ in self?.refresh(background: true) }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
     }
     deinit { timer?.invalidate() }
-    func refresh() {
+    func refresh() { refresh(background: false) }
+    func refresh(background: Bool) {
         guard !refreshing else { return }
         refreshing = true
+        let probe = RemoteCommands.shouldProbeTailscale(background: background, tunnelRunning: tailTunnel.running, lastProbe: lastTailscaleProbe, now: Date())
+        if probe { lastTailscaleProbe = Date() }
+        let previousStatus = tailscale
+        let previousMessage = tailMessage
         let tail = RemoteCommands.executable("tailscale")
         tailscalePath = tail
         cloudflarePath = RemoteCommands.executable("cloudflared")
@@ -198,12 +212,13 @@ final class RemoteAccessModel: ObservableObject {
         ngrokPath = ngrok
         DispatchQueue.global(qos: .utility).async {
             let ngrokConfig = ngrok.map { OperationsCommand.run($0, ["config", "check"], timeout: 5) }
-            let result = tail.map { OperationsCommand.run($0, ["status", "--json"], timeout: 5) }
+            let result = (probe ? tail : nil).map { OperationsCommand.run($0, ["status", "--json"], timeout: 5) }
             let status = result?.code == 0 ? try? JSONDecoder().decode(TailStatus.self, from: Data((result?.output ?? "").utf8)) : nil
             DispatchQueue.main.async {
                 self.ngrokMessage = ngrok == nil ? "Not installed" : ngrokConfig?.code == 0 ? "Agent configuration available" : "Complete ngrok account setup"
                 self.tailscale = status
                 self.tailMessage = tail == nil ? "Not installed" : (status.map { $0.connected ? "Connected" : $0.backendState } ?? "Unavailable — open Tailscale to connect")
+                if !probe { self.tailscale = previousStatus; self.tailMessage = previousMessage }
                 self.refreshing = false
             }
         }
