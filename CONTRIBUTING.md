@@ -10,7 +10,7 @@ Use macOS 15.5 or later, Xcode Command Line Tools with Swift and the macOS SDK, 
 git clone https://github.com/netsecdevio/infravibe.git
 cd infravibe
 bash build.sh
-open InfraProxy.app
+open infravibe.app
 ```
 
 The build downloads pinned Sparkle and npm dependencies and produces a Universal2 application. Ordinary development builds do not require signing credentials or notarization. Signing keys and release credentials belong only to the maintainers; do not request or commit them.
@@ -24,7 +24,7 @@ bash Tests/run.sh
 node --check Web/app.js
 bash build.sh
 python3 Tests/browser-integration.py
-bash scripts/verify-architectures.sh InfraProxy.app
+bash scripts/verify-architectures.sh infravibe.app
 git diff --check
 ```
 

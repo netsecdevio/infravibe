@@ -1,6 +1,6 @@
 #!/bin/bash
 set -euo pipefail
-python3 - "${1:?Usage: verify-architectures.sh path/to/InfraProxy.app}" <<'PY'
+python3 - "${1:?Usage: verify-architectures.sh path/to/infravibe.app}" <<'PY'
 import pathlib, subprocess, sys
 root = pathlib.Path(sys.argv[1])
 assert root.is_dir(), f"Missing bundle: {root}"
@@ -15,6 +15,6 @@ for path in root.rglob("*"):
     architectures = set(subprocess.check_output(["/usr/bin/lipo", "-archs", str(path)], text=True).split())
     assert {"arm64", "x86_64"} <= architectures, f"Missing Universal 2 slice: {path}: {architectures}"
     checked.add(path.resolve())
-assert (root / "Contents/MacOS/InfraProxy").resolve() in checked
+assert (root / "Contents/MacOS/Infravibe").resolve() in checked
 print(f"PASS: all {len(checked)} bundled Mach-O binaries contain arm64 and x86_64")
 PY

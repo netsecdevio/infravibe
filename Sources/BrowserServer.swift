@@ -40,7 +40,7 @@ struct BrowserRequest {
     var session: String? {
         headers["cookie"]?.split(separator: ";").compactMap { part -> String? in
             let pair = part.trimmingCharacters(in: .whitespaces).split(separator: "=", maxSplits: 1)
-            return pair.count == 2 && pair[0] == "infraproxy_session" ? String(pair[1]) : nil
+            return pair.count == 2 && pair[0] == "infravibe_session" ? String(pair[1]) : nil
         }.first
     }
 }
@@ -60,7 +60,7 @@ enum BrowserSecurity {
 
 // All network/auth/PTY state is confined to this queue. No terminal bytes or credentials are logged.
 final class BrowserEngine {
-    let queue = DispatchQueue(label: "InfraProxy.browser")
+    let queue = DispatchQueue(label: "Infravibe.browser")
     let assets: URL, helper: URL
     let agents: AgentAccess
     let browserKeys: BrowserKeys
@@ -164,7 +164,7 @@ final class BrowserEngine {
         var arguments: [String] = []
         if kind == "tmux" || kind == "tmux-attach" {
             guard let tmux = ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux"].first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else { throw BrowserFailure.invalid }
-            if kind == "tmux" { arguments = [tmux, "new-session", "-s", "infraproxy-" + UUID().uuidString.prefix(8), "-c", directory] }
+            if kind == "tmux" { arguments = [tmux, "new-session", "-s", "infravibe-" + UUID().uuidString.prefix(8), "-c", directory] }
             else {
                 guard let target = object["target"] as? String, target.hasPrefix("$"), target.dropFirst().allSatisfy(\.isNumber), target.count > 1, target.count < 20 else { throw BrowserFailure.invalid }
                 arguments = [tmux, "attach-session", "-t", target]
@@ -327,7 +327,7 @@ private final class BrowserPeer {
             engine.sessions = engine.sessions.filter { $0.value > Date() }
             guard engine.sessions.count < 32 else { reply(429, "Session limit reached"); return }
             let session = BrowserSecurity.token(); engine.sessions[session] = Date().addingTimeInterval(28800)
-            reply(200, "Signed in", extra: ["Set-Cookie": "infraproxy_session=\(session); Path=/; HttpOnly; SameSite=Strict; Max-Age=28800" + (request.secureOrigin ? "; Secure" : "")]); return
+            reply(200, "Signed in", extra: ["Set-Cookie": "infravibe_session=\(session); Path=/; HttpOnly; SameSite=Strict; Max-Age=28800" + (request.secureOrigin ? "; Secure" : "")]); return
         }
         if request.path == "/api/login", request.method == "POST" {
             guard request.sameOrigin, request.secureOrigin || request.headers["host"] == "127.0.0.1:\(engine.port)" || request.headers["host"] == "localhost:\(engine.port)" else { reply(403, "Origin denied"); return }
@@ -339,7 +339,7 @@ private final class BrowserPeer {
             engine.sessions = engine.sessions.filter { $0.value > Date() }
             guard engine.sessions.count < 32 else { reply(429, "Session limit reached. Rotate the access key in infravibe."); return }
             let session = BrowserSecurity.token(); engine.sessions[session] = Date().addingTimeInterval(28800)
-            reply(200, "Signed in", extra: ["Set-Cookie": "infraproxy_session=\(session); Path=/; HttpOnly; SameSite=Strict; Max-Age=28800" + (request.secureOrigin ? "; Secure" : "")]); return
+            reply(200, "Signed in", extra: ["Set-Cookie": "infravibe_session=\(session); Path=/; HttpOnly; SameSite=Strict; Max-Age=28800" + (request.secureOrigin ? "; Secure" : "")]); return
         }
         guard let session = engine.validSession(request) else { reply(401, "Sign in required"); return }
         if request.path == "/api/status", request.method == "GET" {
@@ -366,7 +366,7 @@ private final class BrowserPeer {
         if request.path == "/api/logout", request.method == "POST" {
             engine.sessions.removeValue(forKey: session)
             for peer in Array(engine.peers.values) where peer.owner == session { peer.close() }
-            reply(200, "Signed out", extra: ["Set-Cookie": "infraproxy_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0" + (request.secureOrigin ? "; Secure" : "")]); return
+            reply(200, "Signed out", extra: ["Set-Cookie": "infravibe_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0" + (request.secureOrigin ? "; Secure" : "")]); return
         }
         if request.path == "/api/ticket", request.method == "POST" {
             engine.tickets = engine.tickets.filter { $0.value.1 > Date() }
@@ -383,13 +383,13 @@ private final class BrowserPeer {
         }
         if request.path == "/terminal", request.method == "GET" {
             let protocols = (request.headers["sec-websocket-protocol"] ?? "").split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
-            guard protocols.count == 2, protocols[0] == "infraproxy", let ticket = engine.tickets.removeValue(forKey: protocols[1]), ticket.0 == session, ticket.1 > Date(),
+            guard protocols.count == 2, protocols[0] == "infravibe", let ticket = engine.tickets.removeValue(forKey: protocols[1]), ticket.0 == session, ticket.1 > Date(),
                   request.headers["upgrade"]?.lowercased() == "websocket", request.headers["connection"]?.lowercased().split(separator: ",").contains(where: { $0.trimmingCharacters(in: .whitespaces) == "upgrade" }) == true,
                   request.headers["sec-websocket-version"] == "13", let key = request.headers["sec-websocket-key"], Data(base64Encoded: key)?.count == 16,
                   engine.peers.values.filter({ $0.webSocket }).count < 8 else { reply(403, "Terminal access denied"); return }
             let digest = Insecure.SHA1.hash(data: Data((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").utf8))
             let accept = Data(digest).base64EncodedString()
-            send(Data("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: \(accept)\r\nSec-WebSocket-Protocol: infraproxy\r\n\r\n".utf8))
+            send(Data("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: \(accept)\r\nSec-WebSocket-Protocol: infravibe\r\n\r\n".utf8))
             owner = session; expires = engine.sessions[session] ?? Date(); webSocket = true
             if let terminalID = ticket.2 { terminal = engine.terminals[terminalID] }
             else { terminal = try? engine.createTerminal([:]) }

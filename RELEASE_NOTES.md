@@ -1,13 +1,10 @@
-# infravibe 2.12.1
+# infravibe 2.13.0 (build 18)
 
-Tailscale no longer flashes in the menu bar every few seconds.
+The app is now infravibe all the way down: `infravibe.app`, bundle identifier `com.dynadobe.infravibe`, settings in `~/Library/Application Support/infravibe`.
 
-- The Remote Access view refreshed on a 10-second timer, and each refresh ran `tailscale status --json`. On machines where Tailscale is installed as the GUI app, that path resolves to the app binary itself, so every refresh launched a short-lived Tailscale process: the icon appeared in the menu bar and vanished again, continuously, for as long as InfraProxy was running.
-- Timer-driven refreshes now query Tailscale only while a Tailscale tunnel is actually running, and at most once per 60 seconds. Refreshes you trigger yourself, such as opening the menu panel or using a share action, still query immediately as before.
-- When a refresh skips the query, the last known Tailnet status is retained instead of being cleared.
+- **Install this version by hand once.** macOS and Sparkle treat a new bundle identifier as a different app, so 2.12.x shows this release as informational and links here instead of installing it. Download the DMG, drag infravibe to Applications, and launch it.
+- On first launch infravibe copies your preferences, Application Support data (agent grants, terminal history) and the DevOps monitor Keychain item from the InfraProxy identity. Originals are copied, never moved, so 2.12.2 still runs if you go back. macOS may ask once to allow Keychain access; denying it only means re-entering monitor credentials.
+- `InfraProxy.app` is moved to the Trash after a successful migration, and the login item is re-registered if the old app launched at login. Any step that fails is retried on the next launch.
+- Build numbers continue one sequence across releases: 2.12.2 shipped as build 17, so 2.13.0 is build 18.
 
-The Tailnet status shown in Remote Access can therefore be up to one panel-open stale while no Tailscale tunnel is running; opening the panel always refreshes it. The Tailscale tunnel itself was never affected by the old behavior.
-
-Validation includes the Swift suite, with new unit coverage for the polling decision. The fix has not yet been observed across a multi-hour run of the installed build; report regressions on the repository.
-
-Signed and notarized Universal macOS application for Apple silicon and Intel. Previous release 2.12.0 remains available for rollback.
+Signed and notarized Universal macOS application for Apple silicon and Intel. 2.12.2 remains available for rollback.

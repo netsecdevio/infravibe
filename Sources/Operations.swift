@@ -40,7 +40,7 @@ enum TeleportExpiry {
 }
 
 final class OperationsModel: ObservableObject {
-    weak var manager: InfraProxyManager?
+    weak var manager: InfravibeManager?
     @Published var tab: DashboardTab = .connections
     @Published var expiry: Date?
     @Published var now = Date()
@@ -107,7 +107,7 @@ final class OperationsModel: ObservableObject {
 struct OperationsView: View {
     @ObservedObject var model: OperationsModel
     let updater: AppUpdater
-    @ObservedObject var manager: InfraProxyManager
+    @ObservedObject var manager: InfravibeManager
     @AppStorage("interfaceTheme") private var theme: InterfaceTheme = .system
     var body: some View {
         TabView(selection: $model.tab) {
@@ -123,7 +123,7 @@ struct OperationsView: View {
         }.frame(minWidth: 1140, minHeight: 560).preferredColorScheme(theme.colorScheme)
     }
 }
-extension InfraProxyManager {
+extension InfravibeManager {
     @objc func showDashboard() {
         if dashboardWindow == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1180, height: 680), styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)

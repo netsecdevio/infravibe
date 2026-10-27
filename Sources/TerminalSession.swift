@@ -13,7 +13,7 @@ final class TerminalSession {
     var finished: ((Int32) -> Void)?
     var changed: (() -> Void)?
     private let queue: DispatchQueue, helper: URL
-    private let inputQueue = DispatchQueue(label: "InfraProxy.pty.input")
+    private let inputQueue = DispatchQueue(label: "Infravibe.pty.input")
     private var child: Process?, input: FileHandle?, reader: FileHandle?
     private var pendingInput = 0
     var running: Bool { ended == nil }

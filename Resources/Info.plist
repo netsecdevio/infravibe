@@ -3,11 +3,11 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleExecutable</key>
-	<string>InfraProxy</string>
+	<string>Infravibe</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.dynadobe.infraproxy</string>
+	<string>com.dynadobe.infravibe</string>
 	<key>CFBundleName</key>
-	<string>InfraProxy</string>
+	<string>Infravibe</string>
 	<key>CFBundleShortVersionString</key>
 	<string>1.0.0</string>
 	<key>CFBundleVersion</key>

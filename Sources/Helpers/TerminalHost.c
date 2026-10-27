@@ -1,4 +1,4 @@
-// InfraProxy's owned PTY bridge. stdin: I + uint32 length + bytes, or R + uint16 cols + uint16 rows.
+// Infravibe's owned PTY bridge. stdin: I + uint32 length + bytes, or R + uint16 cols + uint16 rows.
 #include <util.h>
 #include <sys/ioctl.h>
 #include <sys/select.h>

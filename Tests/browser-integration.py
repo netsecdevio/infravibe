@@ -1,13 +1,13 @@
 import platform, base64, http.client, json, os, pathlib, re, socket, struct, subprocess, sys, tempfile, time
 root = pathlib.Path(__file__).resolve().parent.parent
-with tempfile.TemporaryDirectory(prefix='infraproxy-browser-test-',dir='/tmp') as temp:
+with tempfile.TemporaryDirectory(prefix='infravibe-browser-test-',dir='/tmp') as temp:
     temp = pathlib.Path(temp)
     (temp/'main.swift').write_bytes((root/'Tests/BrowserHarness.swift').read_bytes())
     subprocess.run(['swiftc','-target',f'{platform.machine()}-apple-macosx15.5',str(root/'Sources/BrowserServer.swift'),str(root/'Sources/TerminalSession.swift'),str(root/'Sources/OperationsCommand.swift'),str(root/'Sources/BrowserKeys.swift'),str(root/'Sources/AgentAccess.swift'),str(temp/'main.swift'),'-o',str(temp/'server')], check=True)
     probe = socket.socket(); probe.bind(('127.0.0.1',0)); port = probe.getsockname()[1]; probe.close()
     (temp/'tmux').mkdir(mode=0o700)
     test_env=os.environ.copy();test_env['TMUX_TMPDIR']=str(temp/'tmux')
-    process = subprocess.Popen([str(temp/'server'),str(root/'InfraProxy.app/Contents/Resources/Web'),str(root/'InfraProxy.app/Contents/MacOS/TerminalHost'),str(port),str(temp/'ready.json')], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=test_env)
+    process = subprocess.Popen([str(temp/'server'),str(root/'infravibe.app/Contents/Resources/Web'),str(root/'infravibe.app/Contents/MacOS/TerminalHost'),str(port),str(temp/'ready.json')], stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=test_env)
     sockets=[]
     try:
         deadline=time.time()+10
@@ -39,7 +39,7 @@ with tempfile.TemporaryDirectory(prefix='infraproxy-browser-test-',dir='/tmp') a
         def ticket(session_id=None): return json.loads(request('/api/ticket','POST',{'id':session_id} if session_id else {},cookie)[2])['ticket']
         def websocket(ticket_value, with_cookie=True):
             s=socket.create_connection(('127.0.0.1',port),timeout=3);sockets.append(s)
-            text=f'GET /terminal HTTP/1.1\r\nHost: {host}\r\nOrigin: {origin}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {base64.b64encode(os.urandom(16)).decode()}\r\nSec-WebSocket-Protocol: infraproxy, {ticket_value}\r\n'
+            text=f'GET /terminal HTTP/1.1\r\nHost: {host}\r\nOrigin: {origin}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {base64.b64encode(os.urandom(16)).decode()}\r\nSec-WebSocket-Protocol: infravibe, {ticket_value}\r\n'
             if with_cookie: text+=f'Cookie: {cookie}\r\n'
             s.sendall((text+'\r\n').encode());headers=b''
             while not headers.endswith(b'\r\n\r\n'): headers+=s.recv(1)

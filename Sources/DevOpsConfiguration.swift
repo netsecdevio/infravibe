@@ -286,7 +286,7 @@ protocol DevOpsStoring {
     func write(_ data: Data) throws
 }
 struct DevOpsKeychainStore: DevOpsStoring {
-    private let query: [String:Any] = [kSecClass as String:kSecClassGenericPassword, kSecAttrService as String:"com.dynadobe.infraproxy.devops", kSecAttrAccount as String:"monitors"]
+    private let query: [String:Any] = [kSecClass as String:kSecClassGenericPassword, kSecAttrService as String:"com.dynadobe.infravibe.devops", kSecAttrAccount as String:"monitors"]
     func read() throws -> Data? {
         var attributes = query; attributes[kSecReturnData as String] = true
         var value: CFTypeRef?

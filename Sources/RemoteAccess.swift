@@ -290,7 +290,7 @@ struct TunnelControls: View {
 }
 struct RemoteAccessView: View {
     @ObservedObject var model: RemoteAccessModel
-    @ObservedObject var manager: InfraProxyManager
+    @ObservedObject var manager: InfravibeManager
     @ObservedObject var browser: BrowserDashboard
     @State private var provider: RemoteProvider = .tailscale
     @State private var targetDashboard = true
