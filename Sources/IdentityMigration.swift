@@ -70,10 +70,16 @@ enum IdentityMigration {
             return ["support directory already shared (case-insensitive volume)"]
         }
         guard !manager.fileExists(atPath: current.path) else { return ["support directory already present, left untouched"] }
+        // Copy into a staging directory and rename it into place, so an interrupted or failed copy
+        // never leaves a partial `infravibe` directory that a later launch would accept as complete.
+        let staging = root.appendingPathComponent(".infravibe-migrating", isDirectory: true)
         do {
-            try manager.copyItem(at: legacy, to: current)
+            if manager.fileExists(atPath: staging.path) { try manager.removeItem(at: staging) }
+            try manager.copyItem(at: legacy, to: staging)
+            try manager.moveItem(at: staging, to: current)
             return ["copied support directory"]
         } catch {
+            try? manager.removeItem(at: staging)
             return ["support directory copy failed: \(error.localizedDescription)"]
         }
     }
