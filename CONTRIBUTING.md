@@ -37,7 +37,7 @@ Fork the repository, create a branch, and keep changes focused. Describe the pro
 Security-sensitive changes require particular care: enforce authorization in code, validate request origins and resource ownership, bound inputs and retained output, and document trust boundaries. Do not represent shell access as sandboxed unless isolation is actually enforced and tested.
 
 The public product is infravibe. Release downloads use `infravibe-<version>.dmg`.
-Legacy `infravibe.app` and executable names, bundle IDs, configuration paths, and
+Legacy `InfraProxy.app` and executable names, bundle IDs, configuration paths, and
 updater signing identities remain compatibility interfaces. Preserve those when
 packaging releases; generate the appcast from the renamed archive and update the
 Homebrew URL and checksum only after that archive is published.

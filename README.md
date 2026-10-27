@@ -1,6 +1,6 @@
 # infravibe
 
-Formerly Infravibe. The public product and Homebrew cask are now **infravibe**. The signed bundle filename `infravibe.app`, bundle identifier, and settings paths remain stable for upgrades.
+Formerly InfraProxy. Starting with 2.13.0 the app itself is renamed too: `infravibe.app`, bundle identifier `com.dynadobe.infravibe`, settings under `~/Library/Application Support/infravibe`. On first launch, 2.13.0 copies preferences, Application Support data and the DevOps Keychain item from the InfraProxy identity (originals are left in place). Because the bundle identifier changed, 2.12.x cannot update to 2.13.0 in-app: install the 2.13.0 DMG once by hand.
 
 ## Standalone release 2.8
 
@@ -36,7 +36,7 @@ To share a local web application, enter its listening port and choose:
 - **ngrok**: public HTTPS using your installed, authenticated ngrok agent.
 - **Cloudflare**: a temporary public Quick Tunnel using installed `cloudflared`.
 
-Sharing requires an explicit confirmation. Infravibe owns only the foreground
+Sharing requires an explicit confirmation. infravibe owns only the foreground
 tunnels it starts; stopping one preserves other tunnels. Tailscale sharing uses
 HTTPS port 8443 and refuses an occupied port. Existing Cloudflare configuration
 files are preserved; use the Cloudflare console to manage named tunnels.
@@ -49,11 +49,11 @@ server binds only to `127.0.0.1` (default port 4021). Its browser dashboard show
 Teleport expiry, local listeners, TCP sessions, inbound URLs, and interactive
 terminals running as your Mac user. Both local and remote browsers authenticate.
 
-In **Inbound**, choose the Infravibe dashboard or another local web service,
+In **Inbound**, choose the infravibe dashboard or another local web service,
 then select a provider. Copy the access key from the Authentication section to
 sign in remotely. Tailscale's private tailnet mode is the default; public Funnel,
 ngrok, and Cloudflare sharing require an explicit confirmation. Provider account
-setup stays with the installed provider tools; Infravibe never asks you to paste
+setup stays with the installed provider tools; infravibe never asks you to paste
 provider credentials into its settings.
 
 Browser sessions last eight hours. Restarting the server changes its key;
@@ -75,13 +75,13 @@ both architectures and verifies every bundled executable, including Sparkle help
 
 ## In-app updates (2.6.0+)
 
-Use **Check for Updates…** in the menu bar or **Operations → Advanced**. Infravibe checks daily and offers signed updates for installation and relaunch. Automatic checks can be disabled in the Advanced tab. Install v2.6.0 once to enable this on older installations.
+Use **Check for Updates…** in the menu bar or **Operations → Advanced**. infravibe checks daily and offers signed updates for installation and relaunch. Automatic checks can be disabled in the Advanced tab. Install v2.6.0 once to enable this on older installations.
 
 Release maintainers: see [UPDATING.md](UPDATING.md) for the signed-feed publishing workflow.
 
 ## Google Cloud integration
 
-Open **Google Cloud** in the menu panel. Infravibe discovers installed gcloud accounts and accessible projects automatically. Use **Sign in / Add account** or **Reauthenticate** to authenticate in your browser with the methods offered by Google or your organization, including supported passkeys and hardware security keys.
+Open **Google Cloud** in the menu panel. infravibe discovers installed gcloud accounts and accessible projects automatically. Use **Sign in / Add account** or **Reauthenticate** to authenticate in your browser with the methods offered by Google or your organization, including supported passkeys and hardware security keys.
 
 Choose a populated project and browse VMs, Storage, Cloud SQL, Kubernetes, Cloud Run, or VPC networks. VM start/stop and IAP SSH are available in the app; Cloud Console links open further project management, logs, IAM, and APIs. A Google Cloud CLI installation is required and detected automatically, with an install link and file picker when necessary.
 
@@ -290,9 +290,9 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 Homebrew requires explicit trust for third-party package definitions. The command above trusts only the infravibe cask, not every current or future item in the tap. See [Homebrew Tap Trust](https://docs.brew.sh/Tap-Trust).
 
-If you previously added `netsecdevio/infravibe`, add the new tap using the commands above. Only remove the old tap with `brew untap netsecdevio/infravibe` after migrating any installed casks; do not force-remove a tap with installed packages.
+If you previously added `netsecdevio/infraproxy`, add the new tap using the commands above. Only remove the old tap with `brew untap netsecdevio/infraproxy` after migrating any installed casks; do not force-remove a tap with installed packages.
 
-The cask is named `infravibe`. The stable artifact retains the `infravibe.app` filename for updater compatibility; its interface is branded infravibe. The signed bundle is intentionally not rewritten by Homebrew.
+The cask is named `infravibe`. From 2.13.0 the cask installs `infravibe.app`; releases up to 2.12.x contain `InfraProxy.app`. The signed bundle is intentionally not rewritten by Homebrew.
 
 ## DevOps monitoring
 
@@ -314,8 +314,8 @@ public GitHub workflows without tokens. Drop a supported provider link onto DevO
 Group, search, filter, edit, duplicate, mute or pause monitors.
 
 Packaged releases starting with 2.11.0 use `infravibe-<version>.dmg` and matching checksums.
-The contained `infravibe.app`, bundle identifier and updater signing identity
-remain stable to preserve upgrades. The Homebrew cask references the published
+From 2.13.0 the DMG contains `infravibe.app` (bundle `com.dynadobe.infravibe`); the
+updater signing key is unchanged. The Homebrew cask references the published
 infravibe download and its verified checksum.
 
 **Settings & backups** configures automatic checks (1–60 minutes), notifications,

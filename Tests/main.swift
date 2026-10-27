@@ -535,6 +535,11 @@ assert(currentDefaults.stringArray(forKey: "approvedSessionWorkspaces") == ["/Us
 assert(currentDefaults.string(forKey: "panelMode") == "new")
 assert(currentDefaults.object(forKey: "IdentityMigration.2.13.0.completed") == nil)
 assert(IdentityMigration.migrateDefaults(legacyDomain, to: currentDefaults).isEmpty)
+assert(IdentityMigration.shouldMarkComplete(["copied support directory", "migrated keychain item"]))
+assert(IdentityMigration.shouldMarkComplete([]))
+assert(!IdentityMigration.shouldMarkComplete(["copied support directory", "keychain write failed (OSStatus -25293); re-enter DevOps credentials in Settings"]))
+assert(!IdentityMigration.shouldMarkComplete(["could not retire /Applications/InfraProxy.app: denied"]))
+assert(!IdentityMigration.shouldMarkComplete(["support directory copy failed: disk full"]))
 currentDefaults.removePersistentDomain(forName: currentSuite)
 
 try? FileManager.default.removeItem(at: migrationRoot)

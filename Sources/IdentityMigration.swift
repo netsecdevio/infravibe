@@ -28,8 +28,17 @@ enum IdentityMigration {
         notes.append(contentsOf: migrateSupportDirectory(root: supportRoot))
         notes.append(contentsOf: migrateKeychain())
         notes.append(contentsOf: retireLegacyApp())
-        UserDefaults.standard.set(true, forKey: marker)
         if !notes.isEmpty { NSLog("[infravibe] identity migration: %@", notes.joined(separator: "; ")) }
+        // Every step is idempotent, so a partial failure (locked file, denied Keychain prompt) is retried
+        // on the next launch instead of being recorded as done.
+        if shouldMarkComplete(notes) { UserDefaults.standard.set(true, forKey: marker) }
+    }
+
+    /// Failure notes carry one of these phrases; anything else is a completed or skipped step.
+    static let failurePhrases = ["failed", "could not"]
+
+    static func shouldMarkComplete(_ notes: [String]) -> Bool {
+        !notes.contains { note in failurePhrases.contains { note.contains($0) } }
     }
 
     // MARK: - Preferences
