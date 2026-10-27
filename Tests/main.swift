@@ -500,6 +500,17 @@ func seedLegacy(_ root: URL, _ contents: String) throws {
     try Data(contents.utf8).write(to: legacy.appendingPathComponent("AgentAccess.json"))
 }
 
+// A staging directory left by an interrupted earlier copy is discarded, the copy completes, and no staging remains.
+let resumed = try migrationCase { root in
+    try seedLegacy(root, "{\"grants\":[]}")
+    try FileManager.default.createDirectory(at: root.appendingPathComponent(".infravibe-migrating"), withIntermediateDirectories: true)
+    try Data("partial".utf8).write(to: root.appendingPathComponent(".infravibe-migrating/stale"))
+}
+assert(resumed.notes == ["copied support directory"])
+assert(FileManager.default.fileExists(atPath: resumed.root.appendingPathComponent("infravibe/AgentAccess.json").path))
+assert(!FileManager.default.fileExists(atPath: resumed.root.appendingPathComponent("infravibe/stale").path))
+assert(!FileManager.default.fileExists(atPath: resumed.root.appendingPathComponent(".infravibe-migrating").path))
+
 // Nothing to migrate: a clean install must stay silent rather than inventing a directory.
 let absent = migrationCase { _ in }
 assert(absent.notes.isEmpty)
@@ -535,6 +546,11 @@ assert(currentDefaults.stringArray(forKey: "approvedSessionWorkspaces") == ["/Us
 assert(currentDefaults.string(forKey: "panelMode") == "new")
 assert(currentDefaults.object(forKey: "IdentityMigration.2.13.0.completed") == nil)
 assert(IdentityMigration.migrateDefaults(legacyDomain, to: currentDefaults).isEmpty)
+assert(IdentityMigration.shouldMarkComplete(["copied support directory", "migrated keychain item"]))
+assert(IdentityMigration.shouldMarkComplete([]))
+assert(!IdentityMigration.shouldMarkComplete(["copied support directory", "keychain write failed (OSStatus -25293); re-enter DevOps credentials in Settings"]))
+assert(!IdentityMigration.shouldMarkComplete(["could not retire /Applications/InfraProxy.app: denied"]))
+assert(!IdentityMigration.shouldMarkComplete(["support directory copy failed: disk full"]))
 currentDefaults.removePersistentDomain(forName: currentSuite)
 
 try? FileManager.default.removeItem(at: migrationRoot)

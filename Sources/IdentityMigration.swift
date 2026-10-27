@@ -28,8 +28,17 @@ enum IdentityMigration {
         notes.append(contentsOf: migrateSupportDirectory(root: supportRoot))
         notes.append(contentsOf: migrateKeychain())
         notes.append(contentsOf: retireLegacyApp())
-        UserDefaults.standard.set(true, forKey: marker)
         if !notes.isEmpty { NSLog("[infravibe] identity migration: %@", notes.joined(separator: "; ")) }
+        // Every step is idempotent, so a partial failure (locked file, denied Keychain prompt) is retried
+        // on the next launch instead of being recorded as done.
+        if shouldMarkComplete(notes) { UserDefaults.standard.set(true, forKey: marker) }
+    }
+
+    /// Failure notes carry one of these phrases; anything else is a completed or skipped step.
+    static let failurePhrases = ["failed", "could not"]
+
+    static func shouldMarkComplete(_ notes: [String]) -> Bool {
+        !notes.contains { note in failurePhrases.contains { note.contains($0) } }
     }
 
     // MARK: - Preferences
@@ -61,10 +70,16 @@ enum IdentityMigration {
             return ["support directory already shared (case-insensitive volume)"]
         }
         guard !manager.fileExists(atPath: current.path) else { return ["support directory already present, left untouched"] }
+        // Copy into a staging directory and rename it into place, so an interrupted or failed copy
+        // never leaves a partial `infravibe` directory that a later launch would accept as complete.
+        let staging = root.appendingPathComponent(".infravibe-migrating", isDirectory: true)
         do {
-            try manager.copyItem(at: legacy, to: current)
+            if manager.fileExists(atPath: staging.path) { try manager.removeItem(at: staging) }
+            try manager.copyItem(at: legacy, to: staging)
+            try manager.moveItem(at: staging, to: current)
             return ["copied support directory"]
         } catch {
+            try? manager.removeItem(at: staging)
             return ["support directory copy failed: \(error.localizedDescription)"]
         }
     }
