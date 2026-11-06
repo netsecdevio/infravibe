@@ -22,6 +22,7 @@ struct DevOpsView: View {
         }
     }
     var body: some View {
+        NavigationStack {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading) { Text("DevOps").font(.title2.bold()); Text(model.summary).foregroundStyle(.secondary) }
@@ -57,6 +58,7 @@ struct DevOpsView: View {
                     }.padding(24)
                 }
             }
+        }.navigationTitle("DevOps")
         }.onAppear(perform: model.load)
             .dropDestination(for: URL.self) { urls, _ in
                 guard model.loaded, urls.count == 1, let url = urls.first, let monitor = try? DevOpsSetup.fromLink(url.absoluteString) else { return false }
@@ -407,8 +409,7 @@ struct DevOpsPreferencesView: View {
     @State private var draft = DevOpsPreferences()
     @State private var message = ""
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
+        Form {
                 SettingsSection("Monitoring") {
                     Toggle("Check monitors automatically", isOn: $draft.automaticRefresh)
                     Stepper("Check every \(draft.refreshSeconds / 60) minute(s)", value: $draft.refreshSeconds, in: 60...3600, step: 60)
@@ -434,8 +435,7 @@ struct DevOpsPreferencesView: View {
                     DevOpsLoginItemView()
                     Text("Application updates are configured in Advanced. Certificate verification stays enabled for every provider.").font(.caption).foregroundStyle(.secondary)
                 }
-            }.padding(24)
-        }.onAppear { draft = model.preferences }.onChange(of: model.preferences) { _, value in draft = value }
+        }.formStyle(.grouped).scrollContentBackground(.hidden).onAppear { draft = model.preferences }.onChange(of: model.preferences) { _, value in draft = value }
     }
     private func save() {
         do {

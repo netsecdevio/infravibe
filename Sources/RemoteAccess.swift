@@ -19,6 +19,14 @@ struct TailStatus: Decodable {
     let peerMap: [String: TailPeer]?
     enum CodingKeys: String, CodingKey { case backendState = "BackendState", selfNode = "Self", peerMap = "Peer" }
     var connected: Bool { backendState == "Running" }
+    var displayState: String {
+        switch backendState {
+        case "Running": return "Connected"
+        case "NeedsLogin": return "Sign in required"
+        case "Stopped": return "Stopped"
+        default: return backendState.replacingOccurrences(of: "([a-z])([A-Z])", with: "$1 $2", options: .regularExpression)
+        }
+    }
     var hostname: String { selfNode?.DNSName?.trimmingCharacters(in: CharacterSet(charactersIn: ".")) ?? "" }
     var peers: [TailPeer] { (peerMap ?? [:]).values.sorted { ($0.Online == true ? 0 : 1, $0.name) < ($1.Online == true ? 0 : 1, $1.name) } }
 }
@@ -28,19 +36,34 @@ enum RemoteProvider: String, CaseIterable, Identifiable {
     var isPublic: Bool { self != .tailscale }
 }
 enum RemoteCommands {
-    /// Whether a refresh should run `tailscale status`. On macOS the first
-    /// Tailscale candidate is the GUI app binary, and every invocation briefly
-    /// launches a visible Tailscale process, so the background timer must not
-    /// poll it unless a Tailscale tunnel is active, and then only sparingly.
+    /// Background status checks must use the daemon CLI. Invoking the GUI app
+    /// executable can recreate its NetworkExtension VPN profile and On Demand policy.
+    static func tailscaleActionTitle(connected: Bool, hasCLI: Bool, connecting: Bool = false) -> String {
+        if connecting { return "Cancel" }
+        return connected ? "Refresh" : (hasCLI ? "Connect Tailscale" : "Install Tailscale")
+    }
     static func shouldProbeTailscale(background: Bool, tunnelRunning: Bool, lastProbe: Date, now: Date, minimumInterval: TimeInterval = 60) -> Bool {
         guard background else { return true }
-        return tunnelRunning && now.timeIntervalSince(lastProbe) >= minimumInterval
+        return now.timeIntervalSince(lastProbe) >= minimumInterval
+    }
+    static func executableCandidates(_ name: String, path: String = ProcessInfo.processInfo.environment["PATH"] ?? "") -> [String] {
+        let installed = ["/opt/homebrew/bin/" + name, "/usr/local/bin/" + name]
+        guard name != "tailscale" else { return installed }
+        return installed + path.split(separator: ":").map { String($0) + "/" + name }
+    }
+    static func isUsableTailscaleCLI(atPath path: String) -> Bool {
+        let resolvedURL = URL(fileURLWithPath: path).resolvingSymlinksInPath()
+        let isTailscaleAppBinary = resolvedURL.pathComponents.suffix(4) == ["Tailscale.app", "Contents", "MacOS", "Tailscale"]
+        guard !isTailscaleAppBinary, FileManager.default.isExecutableFile(atPath: resolvedURL.path) else { return false }
+        guard let data = try? Data(contentsOf: resolvedURL, options: [.mappedIfSafe]), data.starts(with: Data("#!".utf8)) else { return true }
+        let header = String(decoding: data.prefix(8192), as: UTF8.self)
+        return !header.contains("Tailscale.app/Contents/MacOS/Tailscale")
     }
     static func executable(_ name: String) -> String? {
-        var candidates = ["/opt/homebrew/bin/" + name, "/usr/local/bin/" + name]
-        if name == "tailscale" { candidates.insert("/Applications/Tailscale.app/Contents/MacOS/Tailscale", at: 0) }
-        candidates += (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map { String($0) + "/" + name }
-        return candidates.first { $0.hasPrefix("/") && FileManager.default.isExecutableFile(atPath: $0) }
+        return executableCandidates(name).first { path in
+            guard path.hasPrefix("/") else { return false }
+            return name == "tailscale" ? isUsableTailscaleCLI(atPath: path) : FileManager.default.isExecutableFile(atPath: path)
+        }
     }
     static func port(_ text: String, blocked: Set<Int>) -> Int? {
         guard !text.isEmpty, text.allSatisfy({ $0.isASCII && $0.isNumber }), let port = Int(text), (1...65535).contains(port), !blocked.contains(port) else { return nil }
@@ -67,6 +90,14 @@ enum RemoteCommands {
         }
         return occupied(config)
     }
+    static func authenticationURL(in output: String) -> URL? {
+        for line in output.components(separatedBy: .newlines) {
+            let candidate = line.trimmingCharacters(in: .whitespaces)
+            guard let url = URL(string: candidate), url.scheme == "https", url.host == "login.tailscale.com", url.path.hasPrefix("/a/"), url.port == nil || url.port == 443, url.user == nil, url.password == nil, url.query == nil, url.fragment == nil else { continue }
+            return url
+        }
+        return nil
+    }
     static func endpoint(in output: String, provider: RemoteProvider) -> URL? {
         if provider == .ngrok {
             return output.split(separator: "\n").compactMap { line -> URL? in
@@ -79,6 +110,86 @@ enum RemoteCommands {
         guard let regex = try? NSRegularExpression(pattern: pattern), let match = regex.firstMatch(in: output, range: NSRange(output.startIndex..., in: output)), let range = Range(match.range, in: output) else { return nil }
         return URL(string: String(output[range]))
     }
+}
+
+// Starts the daemon CLI only when the user explicitly asks to connect. The
+// authentication URL is opened as soon as the CLI emits it.
+final class TailscaleConnector: ObservableObject {
+    @Published private(set) var connecting = false
+    var onAuthenticationURL: ((URL) -> Void)?
+    var onFinish: (() -> Void)?
+    private var process: Process?
+    private var control: CommandControl?
+    private var output = ""
+    private var openedAuthenticationURL = false
+    private var startupTimeout: DispatchWorkItem?
+    private let timeout: TimeInterval
+
+    init(timeout: TimeInterval = 90) {
+        self.timeout = timeout
+    }
+
+    func start(executable: String) {
+        guard process == nil else { return }
+        output = ""
+        openedAuthenticationURL = false
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = ["up", "--accept-dns=true"]
+        process.standardInput = FileHandle.nullDevice
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        let control = CommandControl()
+        self.process = process
+        self.control = control
+        connecting = true
+        pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { handle.readabilityHandler = nil; return }
+            let chunk = String(decoding: data, as: UTF8.self)
+            DispatchQueue.main.async {
+                guard let self, self.process === process else { return }
+                self.output = String((self.output + chunk).suffix(8000))
+                if !self.openedAuthenticationURL, let url = RemoteCommands.authenticationURL(in: self.output) {
+                    self.openedAuthenticationURL = true
+                    self.onAuthenticationURL?(url)
+                }
+            }
+        }
+        process.terminationHandler = { [weak self] ended in
+            pipe.fileHandleForReading.readabilityHandler = nil
+            DispatchQueue.main.async {
+                guard let self, self.process === ended else { return }
+                self.process = nil
+                self.control = nil
+                self.startupTimeout?.cancel()
+                self.startupTimeout = nil
+                self.connecting = false
+                self.onFinish?()
+            }
+        }
+        do {
+            try process.run()
+            control.attach(process)
+            let timeout = DispatchWorkItem { [weak self] in
+                guard let self, self.process === process else { return }
+                control.cancel()
+            }
+            startupTimeout = timeout
+            DispatchQueue.main.asyncAfter(deadline: .now() + self.timeout, execute: timeout)
+        } catch {
+            pipe.fileHandleForReading.readabilityHandler = nil
+            startupTimeout?.cancel()
+            startupTimeout = nil
+            self.process = nil
+            self.control = nil
+            connecting = false
+            onFinish?()
+        }
+    }
+
+    func stop() { startupTimeout?.cancel(); control?.cancel() }
 }
 
 // Own only the foreground process started here. Never kill or reset another app's tunnels.
@@ -179,16 +290,25 @@ final class RemoteAccessModel: ObservableObject {
     let tailTunnel = SharedTunnel()
     let cloudTunnel = SharedTunnel()
     let ngrokTunnel = SharedTunnel()
+    let tailscaleConnector = TailscaleConnector()
     var readyURLs: [URL] { [tailTunnel, cloudTunnel, ngrokTunnel].filter(\.ready).compactMap(\.url) }
+    var tailscaleActionTitle: String { RemoteCommands.tailscaleActionTitle(connected: tailscale?.connected == true, hasCLI: tailscalePath != nil, connecting: tailscaleConnector.connecting) }
     func stopDashboardTunnels(port: Int) { generation += 1; preparing = false; for tunnel in [tailTunnel, cloudTunnel, ngrokTunnel] where tunnel.localPort == port { tunnel.stop() } }
     private var timer: Timer?
     private var generation = 0
     private var lastTailscaleProbe = Date.distantPast
+    private var refreshQueued = false
     private var tunnelChanges = Set<AnyCancellable>()
-    init() {
+    init(openURL: @escaping (URL) -> Void = { NSWorkspace.shared.open($0) }) {
         for tunnel in [tailTunnel, cloudTunnel, ngrokTunnel] {
             tunnel.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &tunnelChanges)
         }
+        tailscaleConnector.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &tunnelChanges)
+        tailscaleConnector.onAuthenticationURL = { [weak self] url in
+            self?.tailMessage = "Complete Tailscale sign-in in your browser"
+            openURL(url)
+        }
+        tailscaleConnector.onFinish = { [weak self] in self?.refresh() }
     }
     func start() {
         refresh()
@@ -199,12 +319,10 @@ final class RemoteAccessModel: ObservableObject {
     deinit { timer?.invalidate() }
     func refresh() { refresh(background: false) }
     func refresh(background: Bool) {
-        guard !refreshing else { return }
+        guard !refreshing else { refreshQueued = true; return }
         refreshing = true
         let probe = RemoteCommands.shouldProbeTailscale(background: background, tunnelRunning: tailTunnel.running, lastProbe: lastTailscaleProbe, now: Date())
         if probe { lastTailscaleProbe = Date() }
-        let previousStatus = tailscale
-        let previousMessage = tailMessage
         let tail = RemoteCommands.executable("tailscale")
         tailscalePath = tail
         cloudflarePath = RemoteCommands.executable("cloudflared")
@@ -216,19 +334,31 @@ final class RemoteAccessModel: ObservableObject {
             let status = result?.code == 0 ? try? JSONDecoder().decode(TailStatus.self, from: Data((result?.output ?? "").utf8)) : nil
             DispatchQueue.main.async {
                 self.ngrokMessage = ngrok == nil ? "Not installed" : ngrokConfig?.code == 0 ? "Agent configuration available" : "Complete ngrok account setup"
-                self.tailscale = status
-                self.tailMessage = tail == nil ? "Not installed" : (status.map { $0.connected ? "Connected" : $0.backendState } ?? "Unavailable — open Tailscale to connect")
-                if !probe { self.tailscale = previousStatus; self.tailMessage = previousMessage }
+                if probe {
+                    self.tailscale = status
+                    self.tailMessage = tail == nil ? "Not installed" : (status.map(\.displayState) ?? "Unavailable — connect Tailscale to continue")
+                }
                 self.refreshing = false
+                if self.refreshQueued {
+                    self.refreshQueued = false
+                    self.refresh()
+                }
             }
         }
     }
-    func openTailscale() {
-        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "io.tailscale.ipn.macos") ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: "io.tailscale.ipn.macsys") {
-            NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
-        } else if FileManager.default.fileExists(atPath: "/Applications/Tailscale.app") {
-            NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: "/Applications/Tailscale.app"), configuration: NSWorkspace.OpenConfiguration())
-        } else { NSWorkspace.shared.open(URL(string: "https://tailscale.com/download/mac")!) }
+    func connectTailscale() {
+        if tailscaleConnector.connecting {
+            tailMessage = "Cancelling Tailscale sign-in…"
+            tailscaleConnector.stop()
+            return
+        }
+        if tailscale?.connected == true { refresh(); return }
+        guard let path = tailscalePath else {
+            NSWorkspace.shared.open(URL(string: "https://tailscale.com/download/mac")!)
+            return
+        }
+        tailMessage = "Starting Tailscale sign-in…"
+        tailscaleConnector.start(executable: path)
     }
     func share(_ provider: RemoteProvider, blockedPorts: Set<Int>) {
         guard !preparing, let port = RemoteCommands.port(localPort, blocked: blockedPorts) else {
@@ -271,7 +401,7 @@ final class RemoteAccessModel: ObservableObject {
             }
         }
     }
-    func shutdown() { generation += 1; preparing = false; timer?.invalidate(); tailTunnel.stop(); cloudTunnel.stop(); ngrokTunnel.stop() }
+    func shutdown() { generation += 1; preparing = false; timer?.invalidate(); tailscaleConnector.stop(); tailTunnel.stop(); cloudTunnel.stop(); ngrokTunnel.stop() }
 }
 
 struct TunnelControls: View {
@@ -297,8 +427,7 @@ struct RemoteAccessView: View {
     @State private var confirmRotation = false
     private var blockedPorts: Set<Int> { Set([Int(manager.configuration.teleport.localPort), Int(manager.configuration.httpProxy.port)].compactMap { $0 }) }
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
+        VibePage("Remote") {
                 SettingsSection("Authentication") {
                     LabeledContent("Authentication method", value: "SSH browser key or access key")
                     Text("Every browser connection authenticates, including localhost and provider tunnels. Browser sessions expire after 8 hours. Anyone with the key can open a shell as your Mac user.").font(.caption).foregroundStyle(.secondary)
@@ -306,7 +435,7 @@ struct RemoteAccessView: View {
                         Button("Copy access key", action: browser.copyKey).disabled(!browser.running)
                         Button("Rotate key…") { confirmRotation = true }.disabled(!browser.running)
                         Spacer()
-                        Button("Open local browser", action: browser.openBrowser).disabled(!browser.running)
+                        Button("Open local dashboard", action: browser.openBrowser).disabled(!browser.running)
                     }
                 }
                 SettingsSection("Trusted browser keys") { BrowserKeySettings(model: manager.browserKeys) }
@@ -321,11 +450,17 @@ struct RemoteAccessView: View {
                     Text("Remote browser → provider tunnel → this Mac. Teleport SOCKS and HTTP forward proxies remain outbound connections in the Outbound tab.").font(.caption).foregroundStyle(.secondary)
                 }
                 SettingsSection("Tailscale integration") {
-                    HStack { Label(model.tailMessage, systemImage: "circle.fill").foregroundStyle(model.tailscale?.connected == true ? .green : .secondary); Spacer(); Button("Open Tailscale", action: model.openTailscale) }
+                    HStack {
+                        Label(model.tailMessage, systemImage: "circle.fill").foregroundStyle(model.tailscale?.connected == true ? .green : (model.tailscale != nil ? .orange : .secondary))
+                        Spacer()
+                        if model.tailscaleConnector.connecting { ProgressView().controlSize(.small) }
+                        Button(model.tailscaleActionTitle, action: model.connectTailscale)
+                    }
+                    if let hostname = model.tailscale?.hostname, !hostname.isEmpty { Text(hostname).font(.system(.caption, design: .monospaced)).textSelection(.enabled) }
                     Picker("Access", selection: $provider) { Text("Private · tailnet only").tag(RemoteProvider.tailscale); Text("Public · Funnel").tag(RemoteProvider.funnel) }.pickerStyle(.segmented)
-                    HStack { Text("Incoming HTTPS on port 8443").font(.caption).foregroundStyle(.secondary); Spacer(); Button("Start inbound access…") { share(provider) }.disabled(model.preparing || model.tailTunnel.running || (targetDashboard && !browser.running)) }
+                    HStack { Text("Incoming HTTPS on port 8443").font(.caption).foregroundStyle(.secondary); Spacer(); Button("Start inbound access…") { share(provider) }.disabled(model.preparing || model.tailTunnel.running || model.tailscale?.connected != true || (targetDashboard && !browser.running)) }
                     TunnelControls(title: "Tailscale", tunnel: model.tailTunnel)
-                    Text("Private Serve access follows your tailnet policy. The infravibe browser key is still required.").font(.caption).foregroundStyle(.secondary)
+                    Text("Uses the installed Tailscale daemon directly and never launches the GUI app. Private Serve access follows your tailnet policy; the infravibe browser key is still required.").font(.caption).foregroundStyle(.secondary)
                 }
                 SettingsSection("ngrok integration") {
                     HStack { Text(model.ngrokMessage); Spacer(); Link("Account setup", destination: URL(string: "https://dashboard.ngrok.com/get-started/setup/macos")!) }
@@ -341,7 +476,6 @@ struct RemoteAccessView: View {
                 ForEach(model.tailscale?.peers ?? []) { peer in
                     HStack { Circle().fill(peer.Online == true ? Color.green : Color.secondary).frame(width: 7, height: 7); Text(peer.name); Spacer(); Text(peer.address).font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary).textSelection(.enabled) }.padding(.horizontal, 8)
                 }
-            }.padding(28)
         }
         .alert("Inbound access", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) { Button("OK") { model.error = nil } } message: { Text(model.error ?? "") }
         .alert("Rotate browser access key?", isPresented: $confirmRotation) { Button("Cancel", role: .cancel) {}; Button("Rotate and disconnect", role: .destructive, action: browser.rotateKey) } message: { Text("All browser logins and terminals will be disconnected. Sign in again with the new key.") }

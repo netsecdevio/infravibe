@@ -2,9 +2,17 @@ import UserNotifications
 import Cocoa
 import SwiftUI
 
-private struct SettingsLabelStyle: LabeledContentStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        HStack { configuration.label; Spacer(minLength: 20); configuration.content }
+struct VibePage<Content: View>: View {
+    let title: String
+    let content: Content
+    init(_ title: String, @ViewBuilder content: () -> Content) { self.title = title; self.content = content() }
+    var body: some View {
+        NavigationStack {
+            Form { content }
+                .formStyle(.grouped)
+                .scrollContentBackground(.hidden)
+                .navigationTitle(title)
+        }
     }
 }
 struct SettingsSection<Content: View>: View {
@@ -12,11 +20,7 @@ struct SettingsSection<Content: View>: View {
     let content: Content
     init(_ title: String, @ViewBuilder content: () -> Content) { self.title = title; self.content = content() }
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title).font(.headline).padding(.horizontal, 8)
-            VStack(alignment: .leading, spacing: 14) { content }.labeledContentStyle(SettingsLabelStyle()).padding(16).frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 12))
-        }
+        Section { content } header: { Text(title).font(.headline) }
     }
 }
 enum PreferredTerminal: String, CaseIterable, Identifiable {
@@ -47,8 +51,7 @@ struct AdvancedSettingsView: View {
     @AppStorage("debugMode") private var debugMode = false
     @State private var terminalMessage = ""
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
+        VibePage("Settings") {
                 SettingsSection("Apps") {
                     HStack {
                         Text("Preferred terminal"); Spacer()
@@ -96,7 +99,6 @@ struct AdvancedSettingsView: View {
                     Text("Browser logins expire after 8 hours. Closing the browser detaches from running sessions. Shells have an 8-hour maximum lifetime. Stopping the server or quitting ends running terminals; rotating the browser key ends human terminals.").font(.callout).foregroundStyle(.secondary)
                     Text("Inbound sharing is off until you start it. It is never restored automatically on launch.").font(.caption).foregroundStyle(.secondary)
                 }
-            }.padding(28)
         }
     }
 }
@@ -138,8 +140,7 @@ struct AgentAccessView: View {
     @State private var message = ""
     @State private var pending: AgentGrant?
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
+        VibePage("Agents") {
                 SettingsSection("Connect your agent") {
                     Text("Give each agent its own identity. Start with device discovery; terminal control requires your separate approval on this Mac.")
                     LabeledContent("MCP endpoint", value: browser.localURL.map { $0.absoluteString + "/mcp" } ?? "Start the browser server in Dashboard")
@@ -170,7 +171,6 @@ struct AgentAccessView: View {
                         VStack(alignment: .leading) { Text("\(event.agent) · \(event.action) · \(event.outcome)"); Text(event.date.formatted()).font(.caption).foregroundStyle(.secondary) }
                     }
                 }
-            }.padding(28)
         }
         .alert("Grant terminal control?", isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } })) {
             Button("Cancel", role: .cancel) { pending = nil }
@@ -219,8 +219,7 @@ struct SessionNotificationSettings: View {
     @AppStorage("sessionNotificationSound") private var sound = false
     @State private var authorization = "Checking…"
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
+        VibePage("Notifications") {
                 SettingsSection("Session notifications") {
                     Toggle("Show session notifications", isOn: $enabled)
                     LabeledContent("macOS permission", value: authorization)
@@ -237,7 +236,6 @@ struct SessionNotificationSettings: View {
                     Text("Banner style and Notification Center visibility are controlled in macOS System Settings → Notifications → infravibe.").font(.caption).foregroundStyle(.secondary)
                     Button("Refresh permission status", action: refresh)
                 }
-            }.padding(28)
         }.onAppear(perform: refresh).onChange(of: enabled) { _, value in
             if value {
                 UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in refresh() }

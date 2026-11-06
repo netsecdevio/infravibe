@@ -154,9 +154,10 @@ class InfravibeManager: NSObject, ObservableObject {
         let panel = menuPopover ?? NSPopover()
         panel.behavior = .transient
         let host = NSHostingController(rootView: MenuBarPanel(manager: self, operations: operations, remote: remoteAccess))
-        // Keep AppKit in charge of the anchored frame when SwiftUI state changes.
+        // Match VibeTunnel's compact menu width and let content determine height.
         host.sizingOptions = []
-        let size = NSSize(width: 350, height: 400)
+        let fitting = host.sizeThatFits(in: CGSize(width: 384, height: 1000))
+        let size = NSSize(width: 384, height: max(300, min(fitting.height, 650)))
         host.view.frame = NSRect(origin: .zero, size: size)
         panel.contentViewController = host
         panel.contentSize = size
@@ -181,7 +182,7 @@ class InfravibeManager: NSObject, ObservableObject {
 
     internal func rebuildMenu() {
         menu.removeAllItems()
-        let dashboard = NSMenuItem(title: "Connection Dashboard & GCP…", action: #selector(showDashboard), keyEquivalent: "d")
+        let dashboard = NSMenuItem(title: "Settings & Operations…", action: #selector(showDashboard), keyEquivalent: "d")
         dashboard.target = self
         menu.addItem(dashboard)
         menu.addItem(.separator())

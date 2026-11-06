@@ -1413,8 +1413,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         IdentityMigration.runIfNeeded()
         infravibeManager = InfravibeManager()
-        if CommandLine.arguments.contains("--dashboard") { infravibeManager?.showDashboard() }
-        if CommandLine.arguments.contains("--menu") { DispatchQueue.main.async { self.infravibeManager?.togglePanel() } }
+        if CommandLine.arguments.contains("--dashboard") { infravibeManager?.browserDashboard.openDashboard() }
+        if CommandLine.arguments.contains("--settings") { infravibeManager?.showDashboard() }
+        if CommandLine.arguments.contains("--menu") { DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { NSApp.activate(ignoringOtherApps: true); self.infravibeManager?.togglePanel() } }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

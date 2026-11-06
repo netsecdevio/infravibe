@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import Combine
 
 let payload = """
 {"active":{"profile_url":"https://other.example:443","valid_until":"2030-01-01T00:00:00Z"},"profiles":[{"profile_url":"https://target.example:443","valid_until":"2026-10-08T12:00:00.123Z"}]}
@@ -132,7 +133,18 @@ print("PASS: discovery, account/project scoping, deleted projects, automatic log
 let tailFixture = #"{"BackendState":"Running","Self":{"DNSName":"host.example.ts.net."},"Peer":{"a":{"ID":"a","HostName":"offline","Online":false},"b":{"ID":"b","HostName":"online","Online":true,"TailscaleIPs":["100.64.0.2"]}}}"#
 let tailStatus = try JSONDecoder().decode(TailStatus.self, from: Data(tailFixture.utf8))
 assert(tailStatus.connected && tailStatus.hostname == "host.example.ts.net")
+let tailLoginStatus = try JSONDecoder().decode(TailStatus.self, from: Data(#"{"BackendState":"NeedsLogin"}"#.utf8))
+assert(tailLoginStatus.displayState == "Sign in required")
+assert(RemoteCommands.tailscaleActionTitle(connected: true, hasCLI: true) == "Refresh")
+assert(RemoteCommands.tailscaleActionTitle(connected: false, hasCLI: true) == "Connect Tailscale")
+assert(RemoteCommands.tailscaleActionTitle(connected: false, hasCLI: false) == "Install Tailscale")
+assert(RemoteCommands.tailscaleActionTitle(connected: false, hasCLI: true, connecting: true) == "Cancel")
 assert(tailStatus.peers.map(\.id) == ["b", "a"] && tailStatus.peers.last?.address == "")
+assert(DashboardTab.allCases.count == 9)
+assert(DashboardTab.connections.title == "Outbound" && DashboardTab.remote.title == "Remote")
+assert(DashboardTab.cloud.title == "Cloud" && DashboardTab.advanced.title == "Settings")
+assert(DashboardTab.browser.title == "Server")
+assert(DashboardTab.allCases.allSatisfy { !$0.icon.isEmpty })
 assert(RemoteCommands.port("3000", blocked: [1080]) == 3000)
 for port in ["0", "65536", "1080", "3000;touch /tmp/bad", "３０００"] { assert(RemoteCommands.port(port, blocked: [1080]) == nil) }
 assert(try! RemoteCommands.portInUse(#"{"TCP":{"8443":{}}}"#))
@@ -142,10 +154,99 @@ assert(try! !RemoteCommands.portInUse("null"))
 assert(RemoteCommands.arguments(.tailscale, port: 3000) == ["serve", "--https=8443", "http://127.0.0.1:3000"])
 assert(RemoteCommands.arguments(.funnel, port: 3000).first == "funnel")
 let probeNow = Date()
+let tailCandidates = RemoteCommands.executableCandidates("tailscale", path: "/Applications/Tailscale.app/Contents/MacOS/Tailscale")
+assert(tailCandidates.first == "/opt/homebrew/bin/tailscale")
+assert(!tailCandidates.contains { $0.contains("Tailscale.app") })
+let tailWrapperFixture = FileManager.default.temporaryDirectory.appendingPathComponent("infravibe-tailscale-wrapper-\(UUID().uuidString)")
+let tailScriptFixture = FileManager.default.temporaryDirectory.appendingPathComponent("infravibe-tailscale-cli-\(UUID().uuidString)")
+try "#!/bin/sh\n/Applications/Tailscale.app/Contents/MacOS/Tailscale \"$@\"\n".write(to: tailWrapperFixture, atomically: true, encoding: .utf8)
+try "#!/bin/sh\nexit 0\n".write(to: tailScriptFixture, atomically: true, encoding: .utf8)
+try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tailWrapperFixture.path)
+try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tailScriptFixture.path)
+assert(!RemoteCommands.isUsableTailscaleCLI(atPath: tailWrapperFixture.path))
+assert(RemoteCommands.isUsableTailscaleCLI(atPath: tailScriptFixture.path))
+assert(!RemoteCommands.isUsableTailscaleCLI(atPath: "/Applications/Tailscale.app/Contents/MacOS/Tailscale"))
+let tailSymlinkRoot = FileManager.default.temporaryDirectory.appendingPathComponent("infravibe-tailscale-symlink-\(UUID().uuidString)")
+let tailAppBinary = tailSymlinkRoot.appendingPathComponent("Tailscale.app/Contents/MacOS/Tailscale")
+let tailSymlink = tailSymlinkRoot.appendingPathComponent("homebrew/bin/tailscale")
+try FileManager.default.createDirectory(at: tailAppBinary.deletingLastPathComponent(), withIntermediateDirectories: true)
+try FileManager.default.createDirectory(at: tailSymlink.deletingLastPathComponent(), withIntermediateDirectories: true)
+try Data("not a script".utf8).write(to: tailAppBinary)
+try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tailAppBinary.path)
+try FileManager.default.createSymbolicLink(at: tailSymlink, withDestinationURL: tailAppBinary)
+assert(!RemoteCommands.isUsableTailscaleCLI(atPath: tailSymlink.path), "A symlink to the Tailscale GUI binary is not a usable daemon CLI")
+try? FileManager.default.removeItem(at: tailSymlinkRoot)
+try? FileManager.default.removeItem(at: tailWrapperFixture)
+try? FileManager.default.removeItem(at: tailScriptFixture)
 assert(RemoteCommands.shouldProbeTailscale(background: false, tunnelRunning: false, lastProbe: probeNow, now: probeNow))
-assert(!RemoteCommands.shouldProbeTailscale(background: true, tunnelRunning: false, lastProbe: .distantPast, now: probeNow))
+assert(RemoteCommands.shouldProbeTailscale(background: true, tunnelRunning: false, lastProbe: .distantPast, now: probeNow))
 assert(!RemoteCommands.shouldProbeTailscale(background: true, tunnelRunning: true, lastProbe: probeNow.addingTimeInterval(-30), now: probeNow))
 assert(RemoteCommands.shouldProbeTailscale(background: true, tunnelRunning: true, lastProbe: probeNow.addingTimeInterval(-61), now: probeNow))
+let tailAuthFixture = "To authenticate, visit:\n\n\thttps://login.tailscale.com/a/example123\n"
+assert(RemoteCommands.authenticationURL(in: tailAuthFixture)?.absoluteString == "https://login.tailscale.com/a/example123")
+assert(RemoteCommands.authenticationURL(in: "https://login.tailscale.com:443/a/example123") != nil)
+assert(RemoteCommands.authenticationURL(in: "https://login.tailscale.com:8443/a/example") == nil)
+assert(RemoteCommands.authenticationURL(in: "https://evil.example/a/example123") == nil)
+assert(RemoteCommands.authenticationURL(in: "https://login.tailscale.com.evil.example/a/example123") == nil)
+let tailAuthScript = FileManager.default.temporaryDirectory.appendingPathComponent("infravibe-tailscale-auth-\(UUID().uuidString)")
+try "#!/bin/sh\nprintf '\\nTo authenticate, visit:\\n\\n\\thttps://login.tailscale.com/a/fixture123\\n'\nsleep 30\n".write(to: tailAuthScript, atomically: true, encoding: .utf8)
+try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tailAuthScript.path)
+let tailConnector = TailscaleConnector()
+var observedTailAuthURL: URL?
+tailConnector.onAuthenticationURL = { observedTailAuthURL = $0 }
+tailConnector.start(executable: tailAuthScript.path)
+let tailAuthDeadline = Date().addingTimeInterval(3)
+while observedTailAuthURL == nil && Date() < tailAuthDeadline { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+assert(observedTailAuthURL?.absoluteString == "https://login.tailscale.com/a/fixture123" && tailConnector.connecting)
+tailConnector.stop()
+let tailConnectorDeadline = Date().addingTimeInterval(4)
+while tailConnector.connecting && Date() < tailConnectorDeadline { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+assert(!tailConnector.connecting)
+let tailTimeoutScript = FileManager.default.temporaryDirectory.appendingPathComponent("infravibe-tailscale-timeout-\(UUID().uuidString)")
+try "#!/bin/sh\nsleep 30\n".write(to: tailTimeoutScript, atomically: true, encoding: .utf8)
+try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tailTimeoutScript.path)
+let tailTimeoutConnector = TailscaleConnector(timeout: 0.1)
+var tailTimeoutFinished = false
+tailTimeoutConnector.onFinish = { tailTimeoutFinished = true }
+tailTimeoutConnector.start(executable: tailTimeoutScript.path)
+assert(tailTimeoutConnector.connecting)
+let tailTimeoutDeadline = Date().addingTimeInterval(4)
+while tailTimeoutConnector.connecting && Date() < tailTimeoutDeadline { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+assert(!tailTimeoutConnector.connecting && tailTimeoutFinished, "Tailscale connection must recover after its timeout")
+let tailMessageModel = RemoteAccessModel(openURL: { _ in })
+tailMessageModel.tailscaleConnector.onAuthenticationURL?(URL(string: "https://login.tailscale.com/a/fixture123")!)
+assert(tailMessageModel.tailMessage == "Complete Tailscale sign-in in your browser")
+let coordinatedTailModel = RemoteAccessModel(openURL: { _ in })
+coordinatedTailModel.refresh()
+let initialTailRefreshDeadline = Date().addingTimeInterval(12)
+while coordinatedTailModel.refreshing && Date() < initialTailRefreshDeadline { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+assert(!coordinatedTailModel.refreshing, "Initial Tailscale refresh did not finish")
+var coordinatedTailRefreshStarts = 0
+var tailMessageAtFirstRefreshEnd: String?
+let coordinatedTailObserver = coordinatedTailModel.$refreshing.dropFirst().sink { refreshing in
+    if refreshing { coordinatedTailRefreshStarts += 1 }
+    else if tailMessageAtFirstRefreshEnd == nil { tailMessageAtFirstRefreshEnd = coordinatedTailModel.tailMessage }
+}
+coordinatedTailModel.refresh(background: true)
+assert(coordinatedTailModel.refreshing, "The second Tailscale refresh must be non-probing and in flight")
+coordinatedTailModel.tailscaleConnector.onAuthenticationURL?(URL(string: "https://login.tailscale.com/a/fixture123")!)
+coordinatedTailModel.tailscaleConnector.onFinish?()
+let coordinatedTailDeadline = Date().addingTimeInterval(12)
+while coordinatedTailModel.refreshing && Date() < coordinatedTailDeadline { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+assert(tailMessageAtFirstRefreshEnd == "Complete Tailscale sign-in in your browser", "A non-probing refresh restored an older Tailscale interaction message")
+assert(coordinatedTailRefreshStarts == 2, "Tailscale completion during an active refresh must queue one follow-up refresh")
+assert(coordinatedTailModel.tailMessage != "Complete Tailscale sign-in in your browser", "The queued probing refresh must apply normal Tailscale status")
+withExtendedLifetime(coordinatedTailObserver) {}
+let operationsSource = try String(contentsOfFile: "Sources/Operations.swift", encoding: .utf8)
+assert(!operationsSource.contains("}.frame(width: 1000, height: 700)"), "The dashboard must not have a fixed size")
+assert(operationsSource.contains("}.frame(minWidth: 1000, minHeight: 700)"), "The dashboard must resize with its window")
+let menuBarSource = try String(contentsOfFile: "Sources/MenuBarPanel.swift", encoding: .utf8)
+assert(menuBarSource.contains("@FocusState private var copyFocused: Bool"), "The copy button must track keyboard focus")
+assert(menuBarSource.contains(".focused($copyFocused)"), "The copy button must bind its keyboard focus")
+assert(menuBarSource.contains(".opacity(hovered || copyFocused || copied ? 1 : 0)"), "The copy button must remain visible on focus, hover, and copy")
+assert(menuBarSource.contains(".accessibilityLabel(\"Copy address\")"), "The copy button needs an explicit VoiceOver label")
+try? FileManager.default.removeItem(at: tailTimeoutScript)
+try? FileManager.default.removeItem(at: tailAuthScript)
 assert(RemoteCommands.endpoint(in: "https://valid-name.trycloudflare.com \n", provider: .cloudflare)?.host == "valid-name.trycloudflare.com")
 assert(RemoteCommands.endpoint(in: "https://valid.trycloudflare.com.evil.test", provider: .cloudflare) == nil)
 assert(RemoteCommands.endpoint(in: "https://host.tail.ts.net:84430", provider: .tailscale) == nil)
@@ -167,6 +268,26 @@ assert(RemoteCommands.endpoint(in: #"{"msg":"started tunnel","url":"https://secr
 let request = try BrowserRequest.parse(Data("POST /api/login HTTP/1.1\r\nHost: localhost:4020\r\nOrigin: http://localhost:4020\r\nContent-Length: 2\r\n\r\n{}".utf8))
 assert(request?.sameOrigin == true && request?.body == Data("{}".utf8))
 assert(BrowserSecurity.equal("same", "same") && !BrowserSecurity.equal("same", "diff"))
+func dashboardHasPendingOpen(_ dashboard: BrowserDashboard) -> Bool {
+    (Mirror(reflecting: dashboard).children.first { $0.label == "openWhenReady" }?.value as? Bool) ?? false
+}
+let invalidOpenDashboard = BrowserDashboard()
+invalidOpenDashboard.portText = "invalid"
+invalidOpenDashboard.openDashboard()
+assert(invalidOpenDashboard.message == "Enter a port between 1 and 65535.")
+assert(!dashboardHasPendingOpen(invalidOpenDashboard), "Invalid Dashboard start must cancel the pending browser open")
+let previousBrowserPort = UserDefaults.standard.object(forKey: "browserPort")
+defer {
+    if let previousBrowserPort { UserDefaults.standard.set(previousBrowserPort, forKey: "browserPort") }
+    else { UserDefaults.standard.removeObject(forKey: "browserPort") }
+}
+let startingOpenDashboard = BrowserDashboard()
+startingOpenDashboard.portText = "4021"
+startingOpenDashboard.start()
+assert(startingOpenDashboard.starting, "Dashboard fixture did not enter its starting state")
+startingOpenDashboard.openDashboard()
+assert(dashboardHasPendingOpen(startingOpenDashboard), "Dashboard open must remain pending while the server is already starting")
+startingOpenDashboard.stop()
 print("PASS: ngrok agent arguments and URL parsing; browser request origin and authentication comparison")
 
 let ngrokFixture = SharedTunnel()

@@ -13,11 +13,21 @@ final class BrowserDashboard: ObservableObject {
     private var engine: BrowserEngine?
     private var timer: Timer?
     private var restartPending = false
+    private var openWhenReady = false
     weak var manager: InfravibeManager?
     var localURL: URL? { running ? URL(string: "http://127.0.0.1:\(activePort)") : nil }
     func start() {
-        guard !running, !starting, let port = RemoteCommands.port(portText, blocked: []) else { message = "Enter a port between 1 and 65535."; return }
-        guard let resources = Bundle.main.resourceURL, let executable = Bundle.main.executableURL else { message = "Application resources unavailable"; return }
+        guard !running, !starting else { return }
+        guard let port = RemoteCommands.port(portText, blocked: []) else {
+            openWhenReady = false
+            message = "Enter a port between 1 and 65535."
+            return
+        }
+        guard let resources = Bundle.main.resourceURL, let executable = Bundle.main.executableURL else {
+            openWhenReady = false
+            message = "Application resources unavailable"
+            return
+        }
         key = BrowserSecurity.token(); starting = true
         manager?.log(.debug, "Starting loopback browser server on port \(port)")
         let engine = BrowserEngine(assets: resources.appendingPathComponent("Web"), helper: executable.deletingLastPathComponent().appendingPathComponent("TerminalHost"), historyDirectory: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/infravibe/TerminalHistory"), agents: manager?.agentAccess ?? AgentAccess(), browserKeys: manager?.browserKeys ?? BrowserKeys())
@@ -34,6 +44,8 @@ final class BrowserDashboard: ObservableObject {
         engine.onState = { [weak self, weak engine] running, port, message, sessions in
             guard let self, self.engine === engine else { return }
             self.running = running; self.starting = false; self.activePort = port; self.message = message; self.sessions = sessions
+            if running && self.openWhenReady { self.openWhenReady = false; self.openBrowser() }
+            if !running && !self.starting { self.openWhenReady = false }
             if !running && self.restartPending {
                 self.restartPending = false
                 DispatchQueue.main.async { [weak self] in self?.start() }
@@ -48,6 +60,7 @@ final class BrowserDashboard: ObservableObject {
     }
     func stop() {
         manager?.log(.debug, "Stopping browser server and owned inbound tunnels")
+        openWhenReady = false
         manager?.remoteAccess.stopDashboardTunnels(port: activePort)
         engine?.stop(); timer?.invalidate(); timer = nil
     }
@@ -59,9 +72,12 @@ final class BrowserDashboard: ObservableObject {
     func copyKey() { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(key, forType: .string) }
     func openBrowser() {
         guard let url = localURL else { return }
-        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
-        components.fragment = "key=" + key
-        NSWorkspace.shared.open(components.url!)
+        // Dashboard opens the browser login page; never bypass it with a key in the URL.
+        NSWorkspace.shared.open(url)
+    }
+    func openDashboard() {
+        if running { openBrowser() }
+        else { openWhenReady = true; start() }
     }
     func endSession(_ id: String) { engine?.endTerminal(id) }
     private func refreshSnapshot() {
@@ -83,8 +99,7 @@ struct BrowserDashboardView: View {
     @ObservedObject var remote: RemoteAccessModel
     @State private var workspaceMessage = ""
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
+        VibePage("Server") {
                 SettingsSection("Server configuration") {
                     LabeledContent("Status") { Label(model.message, systemImage: model.running ? "checkmark.circle.fill" : "circle").foregroundStyle(model.running ? .green : .secondary) }
                     LabeledContent("Access mode", value: "Localhost · authenticated browser access")
@@ -96,13 +111,13 @@ struct BrowserDashboardView: View {
                     HStack {
                         Text("Browser server"); Spacer()
                         if model.running {
-                            Button("Open Browser", action: model.openBrowser)
+                            Button("Open Dashboard", action: model.openBrowser)
                             Button("Restart", action: model.restart)
                             Button("Stop", action: model.stop)
                         } else { Button(model.starting ? "Starting…" : "Start", action: model.start).disabled(model.starting) }
                     }
                 }
-                Text("Host an authenticated dashboard and interactive shell on this Mac. Use the Inbound tab to reach it through Tailscale, ngrok, or Cloudflare.").font(.caption).foregroundStyle(.secondary)
+                Text("Host an authenticated dashboard and interactive shell on this Mac. Use the Remote tab to reach it through Tailscale, ngrok, or Cloudflare.").font(.caption).foregroundStyle(.secondary)
                 SettingsSection("Terminal workspaces") {
                     Text("Sessions can read and write only their selected approved workspace and a private temporary home. Network access and host credentials are blocked. Existing host tmux sessions cannot be attached.").font(.caption).foregroundStyle(.secondary)
                     Button("Approve repository folder…") {
@@ -126,7 +141,6 @@ struct BrowserDashboardView: View {
                     }
                 }
                 Text("Closing a browser detaches its view; the shell keeps running. Use End session to stop it. Exited sessions retain bounded output previews. Stopping the server ends running terminals; detached jobs may continue.").font(.caption).foregroundStyle(.secondary)
-            }.padding(28)
         }
     }
 }

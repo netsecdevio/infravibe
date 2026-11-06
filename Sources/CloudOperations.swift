@@ -310,6 +310,7 @@ final class GoogleCloudModel: ObservableObject {
 struct GoogleCloudView: View {
     @ObservedObject var model: GoogleCloudModel
     var body: some View {
+        NavigationStack {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("Google Cloud").font(.title2.bold())
@@ -387,6 +388,7 @@ struct GoogleCloudView: View {
                     Button("Detect again") { model.discover() }
                 }.disabled(model.busy)
             }
-        }.padding(24).onAppear { model.discoverIfNeeded() }
+        }.padding(24).navigationTitle("Cloud")
+        }.onAppear { model.discoverIfNeeded() }
     }
 }

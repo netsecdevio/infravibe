@@ -111,23 +111,24 @@ struct OperationsView: View {
     @AppStorage("interfaceTheme") private var theme: InterfaceTheme = .system
     var body: some View {
         TabView(selection: $model.tab) {
-            OutboundSessionsView(model: model).tabItem { Label("Outbound", systemImage: "network") }.tag(DashboardTab.connections)
-            BrowserDashboardView(model: manager.browserDashboard, remote: manager.remoteAccess).tabItem { Label("Dashboard", systemImage: "server.rack") }.tag(DashboardTab.browser)
-            RemoteAccessView(model: manager.remoteAccess, manager: manager, browser: manager.browserDashboard).tabItem { Label("Inbound", systemImage: "point.3.connected.trianglepath.dotted") }.tag(DashboardTab.remote)
-            GoogleCloudView(model: model.cloud).tabItem { Label("Google Cloud", systemImage: "cloud") }.tag(DashboardTab.cloud)
-            DevOpsView(model: model.devops).tabItem { Label("DevOps", systemImage: "hammer") }.tag(DashboardTab.devops)
-            AdvancedSettingsView(manager: manager, updater: updater).tabItem { Label("Advanced", systemImage: "gearshape.2") }.tag(DashboardTab.advanced)
-            AgentAccessView(model: manager.agentAccess, browser: manager.browserDashboard).tabItem { Label("Agents", systemImage: "person.badge.key") }.tag(DashboardTab.agents)
-            SessionNotificationSettings(browser: manager.browserDashboard).tabItem { Label("Notifications", systemImage: "bell") }.tag(DashboardTab.notifications)
-            AboutSettingsView().tabItem { Label("About", systemImage: "info.circle") }.tag(DashboardTab.about)
-        }.frame(minWidth: 1140, minHeight: 560).preferredColorScheme(theme.colorScheme)
+            OutboundSessionsView(model: model).tabItem { Label(DashboardTab.connections.title, systemImage: DashboardTab.connections.icon) }.tag(DashboardTab.connections)
+            BrowserDashboardView(model: manager.browserDashboard, remote: manager.remoteAccess).tabItem { Label(DashboardTab.browser.title, systemImage: DashboardTab.browser.icon) }.tag(DashboardTab.browser)
+            RemoteAccessView(model: manager.remoteAccess, manager: manager, browser: manager.browserDashboard).tabItem { Label(DashboardTab.remote.title, systemImage: DashboardTab.remote.icon) }.tag(DashboardTab.remote)
+            GoogleCloudView(model: model.cloud).tabItem { Label(DashboardTab.cloud.title, systemImage: DashboardTab.cloud.icon) }.tag(DashboardTab.cloud)
+            DevOpsView(model: model.devops).tabItem { Label(DashboardTab.devops.title, systemImage: DashboardTab.devops.icon) }.tag(DashboardTab.devops)
+            AdvancedSettingsView(manager: manager, updater: updater).tabItem { Label(DashboardTab.advanced.title, systemImage: DashboardTab.advanced.icon) }.tag(DashboardTab.advanced)
+            AgentAccessView(model: manager.agentAccess, browser: manager.browserDashboard).tabItem { Label(DashboardTab.agents.title, systemImage: DashboardTab.agents.icon) }.tag(DashboardTab.agents)
+            SessionNotificationSettings(browser: manager.browserDashboard).tabItem { Label(DashboardTab.notifications.title, systemImage: DashboardTab.notifications.icon) }.tag(DashboardTab.notifications)
+            AboutSettingsView().tabItem { Label(DashboardTab.about.title, systemImage: DashboardTab.about.icon) }.tag(DashboardTab.about)
+        }.frame(minWidth: 1000, minHeight: 700).preferredColorScheme(theme.colorScheme)
     }
 }
 extension InfravibeManager {
     @objc func showDashboard() {
         if dashboardWindow == nil {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1180, height: 680), styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
-            window.title = "infravibe — Operations"
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1040, height: 740), styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
+            window.title = "infravibe"
+            window.contentMinSize = NSSize(width: 1000, height: 700)
             window.isReleasedWhenClosed = false
             window.contentView = NSHostingView(rootView: OperationsView(model: operations, updater: appUpdater, manager: self))
             window.center()
@@ -142,8 +143,7 @@ extension InfravibeManager {
 struct OutboundSessionsView: View {
     @ObservedObject var model: OperationsModel
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
+        VibePage("Outbound") {
                 SettingsSection("Teleport") {
                     HStack {
                         Text("Credential expires in")
@@ -182,7 +182,6 @@ struct OutboundSessionsView: View {
                         }
                     }
                 }
-            }.padding(28)
         }
     }
 }
