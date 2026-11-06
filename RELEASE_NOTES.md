@@ -1,6 +1,15 @@
-# infravibe 2.13.0
+# infravibe 2.13.0 (build 18)
 
-A VibeTunnel-style native interface, a real browser Dashboard, and a safer headless Tailscale integration.
+A VibeTunnel-style native interface, a real browser Dashboard, safer headless Tailscale integration, and the completed infravibe identity migration.
+
+## Identity migration
+
+The app is now infravibe all the way down: `infravibe.app`, bundle identifier `com.dynadobe.infravibe`, and settings in `~/Library/Application Support/infravibe`.
+
+- **Install this version by hand once.** macOS and Sparkle treat a new bundle identifier as a different app, so 2.12.x shows this release as informational and links here instead of installing it. Download the DMG, drag infravibe to Applications, and launch it.
+- On first launch infravibe copies your preferences, Application Support data (agent grants and terminal history), and the DevOps monitor Keychain item from the InfraProxy identity. Originals are copied, never moved, so 2.12.2 still runs if you go back. macOS may ask once to allow Keychain access; denying it only means re-entering monitor credentials.
+- `InfraProxy.app` is moved to the Trash only after all other migration steps succeed. Any failed step is retried on the next launch. The login item is not re-registered automatically; review and enable **Open infravibe at login** yourself in Settings if desired.
+- Build numbers continue one sequence across releases: 2.12.2 shipped as build 17, so 2.13.0 is build 18.
 
 ## Dashboard and interface
 
@@ -19,7 +28,7 @@ A VibeTunnel-style native interface, a real browser Dashboard, and a safer headl
 
 ## Validation and distribution
 
-- Expanded regression coverage for CLI validation, authentication URLs, process lifetime, refresh races, Dashboard startup, window sizing, and accessibility.
+- Expanded regression coverage for identity migration, CLI validation, authentication URLs, process lifetime, refresh races, Dashboard startup, window sizing, and accessibility.
 - Full Swift and browser integration suites pass.
 - Signed and notarized Universal macOS application for Apple silicon and Intel, built against macOS 15.5 or later.
 

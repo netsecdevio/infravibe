@@ -1,6 +1,5 @@
 import Foundation
 import Security
-import ServiceManagement
 
 /// One-time migration from the pre-2.13.0 identity (`com.dynadobe.infraproxy`, `InfraProxy.app`)
 /// to the current one (`com.dynadobe.infravibe`, `infravibe.app`).
@@ -27,9 +26,25 @@ enum IdentityMigration {
         }
         notes.append(contentsOf: migrateSupportDirectory(root: supportRoot))
         notes.append(contentsOf: migrateKeychain())
-        notes.append(contentsOf: retireLegacyApp())
-        UserDefaults.standard.set(true, forKey: marker)
+        if shouldRetireLegacyApp(after: notes) {
+            notes.append(contentsOf: retireLegacyApp())
+        }
         if !notes.isEmpty { NSLog("[infravibe] identity migration: %@", notes.joined(separator: "; ")) }
+        // Every step is idempotent, so a partial failure (locked file, denied Keychain prompt) is retried
+        // on the next launch instead of being recorded as done.
+        if shouldMarkComplete(notes) { UserDefaults.standard.set(true, forKey: marker) }
+    }
+
+    /// Failure notes carry one of these phrases; anything else is a completed or skipped step.
+    static let failurePhrases = ["failed", "could not"]
+
+    static func shouldMarkComplete(_ notes: [String]) -> Bool {
+        !notes.contains { note in failurePhrases.contains { note.contains($0) } }
+    }
+
+    /// Keep the legacy app as a fallback unless every preceding migration step succeeded.
+    static func shouldRetireLegacyApp(after notes: [String]) -> Bool {
+        shouldMarkComplete(notes)
     }
 
     // MARK: - Preferences
@@ -61,10 +76,16 @@ enum IdentityMigration {
             return ["support directory already shared (case-insensitive volume)"]
         }
         guard !manager.fileExists(atPath: current.path) else { return ["support directory already present, left untouched"] }
+        // Copy into a staging directory and rename it into place, so an interrupted or failed copy
+        // never leaves a partial `infravibe` directory that a later launch would accept as complete.
+        let staging = root.appendingPathComponent(".infravibe-migrating", isDirectory: true)
         do {
-            try manager.copyItem(at: legacy, to: current)
+            if manager.fileExists(atPath: staging.path) { try manager.removeItem(at: staging) }
+            try manager.copyItem(at: legacy, to: staging)
+            try manager.moveItem(at: staging, to: current)
             return ["copied support directory"]
         } catch {
+            try? manager.removeItem(at: staging)
             return ["support directory copy failed: \(error.localizedDescription)"]
         }
     }
@@ -108,14 +129,14 @@ enum IdentityMigration {
         return ["migrated keychain item"]
     }
 
-    // MARK: - Legacy app bundle and login item
+    // MARK: - Legacy app bundle
 
     /// Moves `InfraProxy.app` to the Trash so the machine cannot end up running both builds.
     ///
     /// A login item registered by the old bundle cannot be unregistered from here — `SMAppService`
-    /// only addresses the calling app — but retiring the bundle makes that registration inert and
-    /// macOS prunes it. If the old build launched at login, re-register this one so the behaviour
-    /// the user chose survives the rename.
+    /// only addresses the calling app — but retiring the bundle makes that registration inert.
+    /// The legacy main-app login status cannot be established safely, so this migration never
+    /// registers the current app at login; enabling it remains an explicit user choice.
     private static func retireLegacyApp() -> [String] {
         let manager = FileManager.default
         let running = Bundle.main.bundleURL.resolvingSymlinksInPath().standardizedFileURL
@@ -139,10 +160,6 @@ enum IdentityMigration {
             }
         }
 
-        if !notes.isEmpty, SMAppService.mainApp.status != .enabled {
-            do { try SMAppService.mainApp.register(); notes.append("re-registered login item") }
-            catch { notes.append("login item re-registration failed: \(error.localizedDescription)") }
-        }
         return notes
     }
 

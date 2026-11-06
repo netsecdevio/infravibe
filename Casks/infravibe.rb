@@ -12,7 +12,7 @@ cask "infravibe" do
   auto_updates true
   depends_on macos: :sequoia
 
-  app "infravibe.app"
+  app "InfraProxy.app"
 
   caveats do
     <<~EOS
