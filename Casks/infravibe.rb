@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
 cask "infravibe" do
-  version "2.12.1"
-  sha256 "1c5669f8e64cb9b85cf3b3c5fedebd396d9d82846191de29dfea5dba5d5f965a"
+  version "2.13.0"
+  sha256 "606c93eef38f385558c592566f498ac69b0c3d394e18bcb978c008db8eeca951"
 
   url "https://github.com/netsecdevio/infravibe/releases/download/v#{version}/infravibe-#{version}.dmg"
   name "infravibe"
@@ -12,7 +12,7 @@ cask "infravibe" do
   auto_updates true
   depends_on macos: :sequoia
 
-  app "InfraProxy.app"
+  app "infravibe.app"
 
   caveats do
     <<~EOS
