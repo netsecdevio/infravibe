@@ -221,18 +221,28 @@ private struct RemoteOverview: View {
     @ObservedObject var browser: BrowserDashboard
     @ObservedObject var remote: RemoteAccessModel
     var open: () -> Void
+    private var live: [BrowserSessionSnapshot] { browser.sessions.filter(\.running) }
+    private var exited: [BrowserSessionSnapshot] { browser.sessions.filter { !$0.running } }
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            MenuSectionHeader(title: "Terminal sessions", count: browser.sessions.count)
-            if browser.sessions.isEmpty {
+            MenuSectionHeader(title: "Live terminal sessions", count: live.count)
+            if live.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "terminal").font(.system(size: 26)).foregroundStyle(.secondary)
-                    Text("No active sessions").font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text("No live sessions").font(.system(size: 12)).foregroundStyle(.secondary)
                     Button("Open Dashboard", action: open).buttonStyle(.link).font(.system(size: 11))
                 }.frame(maxWidth: .infinity).padding(.vertical, 16)
             } else {
-                ForEach(browser.sessions.prefix(6), id: \.self) { id in
-                    MenuNavigationRow(title: String(id.prefix(8)), icon: "terminal", status: "Running", action: open)
+                ForEach(live.prefix(6)) { session in
+                    MenuNavigationRow(title: session.name, icon: "terminal", status: "Live", action: open)
+                        .help(session.directory)
+                }
+            }
+            if !exited.isEmpty {
+                MenuSectionHeader(title: "Exited sessions", count: exited.count)
+                ForEach(exited.prefix(4)) { session in
+                    MenuNavigationRow(title: session.name, icon: "terminal", status: session.exitCode.map { "Exit \($0)" } ?? "Exited", action: open)
+                        .help(session.directory)
                 }
             }
             CompactTunnel(tunnel: remote.tailTunnel)

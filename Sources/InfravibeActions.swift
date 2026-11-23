@@ -2,6 +2,46 @@ import Cocoa
 import Foundation
 import UserNotifications
 
+final class ProxyRestartCoordinator {
+    private var pending = false
+
+    func restart(processRunning: Bool, stop: () -> Void, start: () -> Void) {
+        if processRunning {
+            pending = true
+            stop()
+        } else {
+            pending = false
+            start()
+        }
+    }
+
+    func cancelPending() {
+        pending = false
+    }
+
+    func completeTermination(start: () -> Void) {
+        guard pending else { return }
+        pending = false
+        start()
+    }
+}
+
+enum ProxyStopCleanup {
+    static func shouldApply(stoppingProcess: Process, currentProcess: Process?) -> Bool {
+        currentProcess === stoppingProcess
+    }
+}
+
+enum OrphanProxyStop {
+    static func run(killExistingProcesses: Bool, kill: () -> Void, confirmAndKill: () -> Bool) -> Bool {
+        if killExistingProcesses {
+            kill()
+            return true
+        }
+        return confirmAndKill()
+    }
+}
+
 // MARK: - InfravibeManager Actions Extension
 extension InfravibeManager {
 
@@ -111,7 +151,7 @@ extension InfravibeManager {
             if configuration.killExistingProcesses {
                 log(.info, "Killing existing processes on SOCKS port")
                 killProcesses(socksPids)
-            } else if !showPortContentionDialog(pids: socksPids) {
+            } else if !showPortContentionDialog(pids: socksPids, port: configuration.teleport.localPort) {
                 return
             }
         }
@@ -131,7 +171,27 @@ extension InfravibeManager {
     }
 
     @objc func stopProxy() {
-        guard isRunning, let process = socksProcess else { return }
+        stopProxy(userInitiated: true)
+    }
+
+    private func stopProxy(userInitiated: Bool) {
+        if userInitiated { iaRestartCoordinator.cancelPending() }
+        guard let process = socksProcess, process.isRunning else {
+            let stalePids = checkPortContentionForPort(configuration.teleport.localPort)
+            guard !stalePids.isEmpty else { userRequestedStop = true; isRunning = false; rebuildMenu(); return }
+            if OrphanProxyStop.run(
+                killExistingProcesses: configuration.killExistingProcesses,
+                kill: { self.killProcesses(stalePids) },
+                confirmAndKill: { self.showPortContentionDialog(pids: stalePids, port: configuration.teleport.localPort) }
+            ) {
+                userRequestedStop = true
+            } else {
+                return
+            }
+            isRunning = false
+            rebuildMenu()
+            return
+        }
 
         log(.info, "Stopping IA Proxy process")
         userRequestedStop = true
@@ -148,6 +208,7 @@ extension InfravibeManager {
                     }
                 }
             }
+            guard ProxyStopCleanup.shouldApply(stoppingProcess: process, currentProcess: self?.socksProcess) else { return }
             self?.isRunning = false
             self?.rebuildMenu()
             self?.showNotification(title: "IA Proxy Stopped", message: "infravibe has been stopped")
@@ -156,10 +217,10 @@ extension InfravibeManager {
 
     @objc func restartProxy() {
         log(.info, "Restarting IA Proxy")
-        stopProxy()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
-            self?.startProxy()
-        }
+        iaRestartCoordinator.restart(processRunning: socksProcess?.isRunning == true, stop: { self.stopProxy(userInitiated: false) }, start: {
+            self.isRunning = false
+            self.startProxy()
+        })
     }
 
     // MARK: - HTTP Proxy Actions
@@ -214,11 +275,13 @@ extension InfravibeManager {
 
         httpProxyProcess = Process()
         httpProxyProcess?.launchPath = executablePath
-        httpProxyProcess?.arguments = ["-p", configuration.httpProxy.port]
+        httpProxyProcess?.arguments = HTTPProxyCommand.arguments(httpPort: configuration.httpProxy.port, socksPort: configuration.teleport.localPort)
 
-        var environment = ProcessInfo.processInfo.environment
-        environment["HOME"] = FileManager.default.homeDirectoryForCurrentUser.path
-        httpProxyProcess?.environment = environment
+        httpProxyProcess?.environment = HTTPProxyCommand.environment(
+            base: ProcessInfo.processInfo.environment,
+            home: FileManager.default.homeDirectoryForCurrentUser.path,
+            executablePath: executablePath
+        )
 
         let outputPipe = Pipe()
         httpProxyProcess?.standardOutput = outputPipe
@@ -229,6 +292,9 @@ extension InfravibeManager {
                 self?.isHttpProxyRunning = false
                 self?.rebuildMenu()
                 self?.log(.info, "HTTP Proxy terminated")
+                self?.httpRestartCoordinator.completeTermination {
+                    self?.startHttpProxy()
+                }
             }
         }
 
@@ -245,7 +311,30 @@ extension InfravibeManager {
     }
 
     @objc func stopHttpProxy() {
-        guard isHttpProxyRunning, let process = httpProxyProcess else { return }
+        stopHttpProxy(userInitiated: true)
+    }
+
+    private func stopHttpProxy(userInitiated: Bool) {
+        if userInitiated { httpRestartCoordinator.cancelPending() }
+        guard let process = httpProxyProcess, process.isRunning else {
+            let stalePids = checkPortContentionForPort(configuration.httpProxy.port)
+            guard !stalePids.isEmpty else { isHttpProxyRunning = false; rebuildMenu(); return }
+            if configuration.killExistingProcesses {
+                killProcesses(stalePids)
+            } else {
+                let alert = NSAlert()
+                alert.messageText = "HTTP Port Contention"
+                alert.informativeText = "Stop the process using HTTP proxy port \(configuration.httpProxy.port)? PIDs: \(stalePids.map(String.init).joined(separator: ", "))"
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "Stop Process")
+                alert.addButton(withTitle: "Cancel")
+                if alert.runModal() != .alertFirstButtonReturn { return }
+                killProcesses(stalePids)
+            }
+            isHttpProxyRunning = false
+            rebuildMenu()
+            return
+        }
 
         log(.info, "Stopping HTTP Proxy")
         process.terminate()
@@ -254,6 +343,7 @@ extension InfravibeManager {
             if process.isRunning {
                 process.interrupt()
             }
+            guard ProxyStopCleanup.shouldApply(stoppingProcess: process, currentProcess: self?.httpProxyProcess) else { return }
             self?.isHttpProxyRunning = false
             self?.rebuildMenu()
             self?.showNotification(title: "HTTP Proxy Stopped", message: "HTTP Proxy has been stopped")
@@ -315,10 +405,10 @@ extension InfravibeManager {
 
     @objc func restartHttpProxy() {
         log(.info, "Restarting HTTP Proxy")
-        stopHttpProxy()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-            self?.startHttpProxy()
-        }
+        httpRestartCoordinator.restart(processRunning: httpProxyProcess?.isRunning == true, stop: { self.stopHttpProxy(userInitiated: false) }, start: {
+            self.isHttpProxyRunning = false
+            self.startHttpProxy()
+        })
     }
 
     // MARK: - Teleport Login Actions

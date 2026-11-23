@@ -79,7 +79,7 @@ final class BrowserEngine {
     fileprivate var snapshot: [String: Any] = [:]
     fileprivate var failedLogins: [Date] = []
     var onSessionEvent: ((String, Int32?) -> Void)?
-    var onState: ((Bool, Int, String, [String]) -> Void)?
+    var onState: ((Bool, Int, String, [BrowserSessionSnapshot]) -> Void)?
     fileprivate var port = 0
     init(assets: URL, helper: URL, historyDirectory: URL? = nil, agents: AgentAccess = AgentAccess(), browserKeys: BrowserKeys = BrowserKeys()) {
         self.assets = assets; self.helper = helper; self.agents = agents; self.browserKeys = browserKeys; self.history = TerminalHistory(directory: historyDirectory)
@@ -246,9 +246,9 @@ final class BrowserEngine {
     }
     func endTerminal(_ id: String) { queue.async { self.terminals[id]?.stop() } }
     fileprivate func notify(_ running: Bool = true, _ message: String = "Running · localhost only") {
-        let ids = terminals.values.filter(\.running).map(\.id).sorted()
+        let snapshots = terminals.values.sorted { $0.created > $1.created }.map(BrowserSessionSnapshot.init)
         let port = self.port
-        DispatchQueue.main.async { [weak self] in self?.onState?(running, port, message, ids) }
+        DispatchQueue.main.async { [weak self] in self?.onState?(running, port, message, snapshots) }
     }
     fileprivate func validSession(_ request: BrowserRequest) -> String? {
         guard let value = request.session, let expiry = sessions[value], expiry > Date() else { return nil }

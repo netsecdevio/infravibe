@@ -1,5 +1,28 @@
 import Foundation
 
+struct BrowserSessionSnapshot: Identifiable, Equatable {
+    let id: String
+    let name: String
+    let directory: String
+    let kind: String
+    let owner: String
+    let created: Date
+    let ended: Date?
+    let exitCode: Int32?
+    var running: Bool { ended == nil }
+
+    init(_ session: TerminalSession) {
+        id = session.id
+        name = session.name
+        directory = session.directory
+        kind = session.kind
+        owner = session.owner
+        created = session.created
+        ended = session.ended
+        exitCode = session.exitCode
+    }
+}
+
 // A terminal belongs to the workspace, not to a browser socket.
 final class TerminalSession {
     let id: String, name: String, directory: String, kind: String, owner: String

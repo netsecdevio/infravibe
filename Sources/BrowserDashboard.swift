@@ -6,7 +6,7 @@ final class BrowserDashboard: ObservableObject {
     @Published private(set) var running = false
     @Published private(set) var starting = false
     @Published private(set) var message = "Stopped"
-    @Published private(set) var sessions: [String] = []
+    @Published private(set) var sessions: [BrowserSessionSnapshot] = []
     @Published private(set) var activePort = 4021
     @Published var portText = String(UserDefaults.standard.integer(forKey: "browserPort") == 0 ? 4021 : UserDefaults.standard.integer(forKey: "browserPort"))
     private var key = BrowserSecurity.token()
@@ -44,6 +44,7 @@ final class BrowserDashboard: ObservableObject {
         engine.onState = { [weak self, weak engine] running, port, message, sessions in
             guard let self, self.engine === engine else { return }
             self.running = running; self.starting = false; self.activePort = port; self.message = message; self.sessions = sessions
+            self.manager?.updateBrowserSessionCount(sessions.filter(\.running).count)
             if running && self.openWhenReady { self.openWhenReady = false; self.openBrowser() }
             if !running && !self.starting { self.openWhenReady = false }
             if !running && self.restartPending {
@@ -134,10 +135,30 @@ struct BrowserDashboardView: View {
                     Divider(); TunnelControls(title: "ngrok", tunnel: remote.ngrokTunnel)
                     Divider(); TunnelControls(title: "Cloudflare", tunnel: remote.cloudTunnel)
                 }
-                SettingsSection("Active terminal sessions · \(model.sessions.count)") {
-                    if model.sessions.isEmpty { Text("No active browser terminals").foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.vertical, 12) }
-                    ForEach(model.sessions, id: \.self) { id in
-                        HStack { Label(String(id.prefix(8)), systemImage: "terminal"); Spacer(); Button("End session") { model.endSession(id) } }
+                SettingsSection("Live terminal sessions · \(model.sessions.filter(\.running).count)") {
+                    if !model.sessions.contains(where: \.running) { Text("No live browser terminals").foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.vertical, 12) }
+                    ForEach(model.sessions.filter(\.running)) { session in
+                        HStack {
+                            VStack(alignment: .leading) {
+                                Label(session.name, systemImage: "terminal")
+                                Text(session.directory).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                            }
+                            Spacer()
+                            Button("End session") { model.endSession(session.id) }
+                        }
+                    }
+                }
+                SettingsSection("Exited terminal sessions · \(model.sessions.filter { !$0.running }.count)") {
+                    if model.sessions.allSatisfy(\.running) { Text("No exited sessions").foregroundStyle(.secondary) }
+                    ForEach(model.sessions.filter { !$0.running }.prefix(12)) { session in
+                        HStack {
+                            VStack(alignment: .leading) {
+                                Label(session.name, systemImage: "terminal")
+                                Text(session.directory).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                            }
+                            Spacer()
+                            Text(session.exitCode.map { "Exit \($0)" } ?? "Exited").foregroundStyle(.secondary)
+                        }
                     }
                 }
                 Text("Closing a browser detaches its view; the shell keeps running. Use End session to stop it. Exited sessions retain bounded output previews. Stopping the server ends running terminals; detached jobs may continue.").font(.caption).foregroundStyle(.secondary)

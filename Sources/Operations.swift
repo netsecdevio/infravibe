@@ -111,7 +111,7 @@ struct OperationsView: View {
     @AppStorage("interfaceTheme") private var theme: InterfaceTheme = .system
     var body: some View {
         TabView(selection: $model.tab) {
-            OutboundSessionsView(model: model).tabItem { Label(DashboardTab.connections.title, systemImage: DashboardTab.connections.icon) }.tag(DashboardTab.connections)
+            OutboundSessionsView(model: model, manager: manager).tabItem { Label(DashboardTab.connections.title, systemImage: DashboardTab.connections.icon) }.tag(DashboardTab.connections)
             BrowserDashboardView(model: manager.browserDashboard, remote: manager.remoteAccess).tabItem { Label(DashboardTab.browser.title, systemImage: DashboardTab.browser.icon) }.tag(DashboardTab.browser)
             RemoteAccessView(model: manager.remoteAccess, manager: manager, browser: manager.browserDashboard).tabItem { Label(DashboardTab.remote.title, systemImage: DashboardTab.remote.icon) }.tag(DashboardTab.remote)
             GoogleCloudView(model: model.cloud).tabItem { Label(DashboardTab.cloud.title, systemImage: DashboardTab.cloud.icon) }.tag(DashboardTab.cloud)
@@ -142,6 +142,7 @@ extension InfravibeManager {
 
 struct OutboundSessionsView: View {
     @ObservedObject var model: OperationsModel
+    @ObservedObject var manager: InfravibeManager
     var body: some View {
         VibePage("Outbound") {
                 SettingsSection("Teleport") {
@@ -169,6 +170,12 @@ struct OutboundSessionsView: View {
                             Spacer()
                             Text("Port \(connection.port)").foregroundStyle(.secondary)
                         }
+                        if connection.port == manager.configuration.teleport.localPort {
+                            ProxyControlRow(canStart: !manager.isRunning, canControl: manager.isRunning || connection.listening, start: manager.startProxy, stop: manager.stopProxy, restart: manager.restartProxy)
+                        }
+                        if connection.port == manager.configuration.httpProxy.port {
+                            ProxyControlRow(canStart: !manager.isHttpProxyRunning, canControl: manager.isHttpProxyRunning || connection.listening, start: manager.startHttpProxy, stop: manager.stopHttpProxy, restart: manager.restartHttpProxy)
+                        }
                         Divider()
                         if !connection.available {
                             Text("Session information could not be read.").foregroundStyle(.secondary)
@@ -182,6 +189,22 @@ struct OutboundSessionsView: View {
                         }
                     }
                 }
+        }
+    }
+}
+
+struct ProxyControlRow: View {
+    let canStart: Bool
+    let canControl: Bool
+    let start: () -> Void
+    let stop: () -> Void
+    let restart: () -> Void
+
+    var body: some View {
+        HStack {
+            Button("Start", action: start).disabled(!canStart)
+            Button("Stop", action: stop).disabled(!canControl)
+            Button("Restart", action: restart).disabled(!canControl)
         }
     }
 }

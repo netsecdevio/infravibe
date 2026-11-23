@@ -1,4 +1,5 @@
 import Foundation
+import Cocoa
 import CryptoKit
 import Combine
 
@@ -245,6 +246,179 @@ assert(menuBarSource.contains("@FocusState private var copyFocused: Bool"), "The
 assert(menuBarSource.contains(".focused($copyFocused)"), "The copy button must bind its keyboard focus")
 assert(menuBarSource.contains(".opacity(hovered || copyFocused || copied ? 1 : 0)"), "The copy button must remain visible on focus, hover, and copy")
 assert(menuBarSource.contains(".accessibilityLabel(\"Copy address\")"), "The copy button needs an explicit VoiceOver label")
+assert(MenuBarTitleFormatter.make(expiryTitle: nil, runningSessions: 0) == "")
+assert(MenuBarTitleFormatter.make(expiryTitle: nil, runningSessions: 3) == " 3")
+assert(MenuBarTitleFormatter.make(expiryTitle: "4h", runningSessions: 2) == " 2 · 4h")
+assert(MenuBarTitleFormatter.make(expiryTitle: "Expired", runningSessions: 0) == " Expired")
+let liveSessionFixture = TerminalSession(id: "live-id", name: "cplogin", directory: "/tmp", kind: "shell", owner: "human", queue: DispatchQueue(label: "snapshot-test"), helper: URL(fileURLWithPath: "/usr/bin/true"))
+let liveSnapshot = BrowserSessionSnapshot(liveSessionFixture)
+assert(liveSnapshot.running && liveSnapshot.name == "cplogin" && liveSnapshot.directory == "/tmp")
+liveSessionFixture.restore(output: Data(), offset: 0, ended: Date(timeIntervalSince1970: 100), exitCode: 0)
+let exitedSnapshot = BrowserSessionSnapshot(liveSessionFixture)
+assert(!exitedSnapshot.running && exitedSnapshot.exitCode == 0 && exitedSnapshot.name == "cplogin")
+assert(menuBarSource.contains("Live terminal sessions"), "The menu panel must label live sessions")
+assert(menuBarSource.contains("Exited sessions"), "The menu panel must retain visible exited sessions")
+assert(!menuBarSource.contains("String(id.prefix(8))"), "The menu panel must not replace session names with ID prefixes")
+let browserDashboardSource = try String(contentsOfFile: "Sources/BrowserDashboard.swift", encoding: .utf8)
+assert(browserDashboardSource.contains("Live terminal sessions"))
+assert(browserDashboardSource.contains("Exited terminal sessions"))
+let popoverWindowFixture = NSWindow()
+let managerSource = try String(contentsOfFile: "Sources/InfravibeManager.swift", encoding: .utf8)
+let statusItemWindowFixture = NSWindow()
+let outsideWindowFixture = NSWindow()
+assert(!MenuPanelDismissal.shouldDismiss(eventWindow: popoverWindowFixture, popoverWindow: popoverWindowFixture, statusItemWindow: statusItemWindowFixture))
+assert(!MenuPanelDismissal.shouldDismiss(eventWindow: statusItemWindowFixture, popoverWindow: popoverWindowFixture, statusItemWindow: statusItemWindowFixture))
+assert(MenuPanelDismissal.shouldDismiss(eventWindow: outsideWindowFixture, popoverWindow: popoverWindowFixture, statusItemWindow: statusItemWindowFixture))
+assert(MenuPanelDismissal.shouldDismiss(eventWindow: nil, popoverWindow: popoverWindowFixture, statusItemWindow: statusItemWindowFixture))
+assert(managerSource.contains("menu.cancelTracking()"), "Closing the panel must also cancel a stale context menu")
+assert(managerSource.contains("installPanelDismissalMonitors()"), "The panel must install explicit outside-click dismissal")
+assert(managerSource.contains("orderOut(nil)"), "Closing the panel must remove its window from the screen")
+assert(managerSource.contains("func popoverDidClose"), "Automatic popover dismissal must release its event monitors")
+assert(managerSource.contains("let iaListenerActive ="), "The IA context menu must recognize orphaned listeners")
+assert(managerSource.contains("let httpListenerActive ="), "The HTTP context menu must recognize orphaned listeners")
+let restartCoordinator = ProxyRestartCoordinator()
+var restartEvents: [String] = []
+restartCoordinator.restart(processRunning: false, stop: { restartEvents.append("stop") }, start: { restartEvents.append("start") })
+assert(restartEvents == ["start"], "A stopped or orphaned process must restart immediately")
+restartEvents = []
+restartCoordinator.restart(processRunning: true, stop: { restartEvents.append("stop") }, start: { restartEvents.append("start") })
+assert(restartEvents == ["stop"], "A running process must stop before restart")
+restartCoordinator.completeTermination { restartEvents.append("start") }
+assert(restartEvents == ["stop", "start"], "Termination must trigger the deferred restart")
+restartCoordinator.completeTermination { restartEvents.append("duplicate") }
+assert(restartEvents == ["stop", "start"], "Termination must only restart once")
+
+// A termination handler can synchronously launch a replacement before the old
+// process's delayed stop cleanup runs. That stale cleanup must not mark the
+// replacement as stopped.
+let stoppingProcess = Process()
+let replacementProcess = Process()
+var currentProcess: Process? = stoppingProcess
+var processMarkedRunning = true
+let delayedCleanup = {
+    guard ProxyStopCleanup.shouldApply(stoppingProcess: stoppingProcess, currentProcess: currentProcess) else { return }
+    processMarkedRunning = false
+}
+currentProcess = replacementProcess // synchronous termination-driven restart
+processMarkedRunning = true
+delayedCleanup()
+assert(processMarkedRunning, "Delayed cleanup from the old process must not stop replacement state")
+currentProcess = stoppingProcess
+processMarkedRunning = true
+delayedCleanup()
+assert(!processMarkedRunning, "Delayed cleanup must still finish the process that was actually stopped")
+assert(!ProxyStopCleanup.shouldApply(stoppingProcess: stoppingProcess, currentProcess: nil), "Cleanup must not clear state after the stopping process has been detached")
+
+let actionsSource = try String(contentsOfFile: "Sources/InfravibeActions.swift", encoding: .utf8)
+assert(actionsSource.contains("ProxyStopCleanup.shouldApply(stoppingProcess: process, currentProcess: self?.socksProcess)"), "IA delayed cleanup must guard the stopping process identity")
+assert(actionsSource.contains("ProxyStopCleanup.shouldApply(stoppingProcess: process, currentProcess: self?.httpProxyProcess)"), "HTTP delayed cleanup must guard the stopping process identity")
+
+let cancelledRestartCoordinator = ProxyRestartCoordinator()
+var cancelledRestartEvents: [String] = []
+cancelledRestartCoordinator.restart(
+    processRunning: true,
+    stop: { cancelledRestartEvents.append("stop") },
+    start: { cancelledRestartEvents.append("replacement") }
+)
+cancelledRestartCoordinator.cancelPending()
+cancelledRestartCoordinator.completeTermination { cancelledRestartEvents.append("replacement") }
+assert(cancelledRestartEvents == ["stop"], "A user Stop must cancel an in-flight restart before termination")
+assert(actionsSource.contains("stop: { self.stopProxy(userInitiated: false) }"), "IA restart must not cancel its own pending restart")
+assert(actionsSource.contains("stop: { self.stopHttpProxy(userInitiated: false) }"), "HTTP restart must not cancel its own pending restart")
+assert(actionsSource.contains("if userInitiated { iaRestartCoordinator.cancelPending() }"), "A user IA Stop must cancel pending restart work")
+assert(actionsSource.contains("if userInitiated { httpRestartCoordinator.cancelPending() }"), "A user HTTP Stop must cancel pending restart work")
+
+let iaStopBody = actionsSource.components(separatedBy: "private func stopProxy(userInitiated: Bool) {")[1]
+    .components(separatedBy: "\n    @objc func restartProxy()")[0]
+assert(
+    iaStopBody.contains("guard !stalePids.isEmpty else { userRequestedStop = true; isRunning = false; rebuildMenu(); return }"),
+    "IA Stop with no managed process or listener must suppress an already queued automatic restart"
+)
+
+// Orphan cleanup is a real user stop only after it is confirmed. A cancelled
+// prompt must not leave automatic recovery suppressed.
+var orphanStopEvents: [String] = []
+var orphanUserRequestedStop = false
+let confirmedOrphanStop = OrphanProxyStop.run(
+    killExistingProcesses: false,
+    kill: { orphanStopEvents.append("kill") },
+    confirmAndKill: { orphanStopEvents.append("confirm-and-kill"); return true }
+)
+if confirmedOrphanStop { orphanUserRequestedStop = true }
+assert(confirmedOrphanStop && orphanUserRequestedStop, "Confirmed orphan cleanup must suppress pending automatic recovery")
+assert(orphanStopEvents == ["confirm-and-kill"])
+
+orphanStopEvents = []
+orphanUserRequestedStop = false
+let automaticOrphanStop = OrphanProxyStop.run(
+    killExistingProcesses: true,
+    kill: { orphanStopEvents.append("kill") },
+    confirmAndKill: { orphanStopEvents.append("unexpected-confirm"); return true }
+)
+if automaticOrphanStop { orphanUserRequestedStop = true }
+assert(automaticOrphanStop && orphanUserRequestedStop && orphanStopEvents == ["kill"], "Automatic orphan cleanup must still count as a user stop")
+
+orphanStopEvents = []
+orphanUserRequestedStop = false
+let cancelledOrphanStop = OrphanProxyStop.run(
+    killExistingProcesses: false,
+    kill: { orphanStopEvents.append("unexpected-kill") },
+    confirmAndKill: { orphanStopEvents.append("cancel"); return false }
+)
+if cancelledOrphanStop { orphanUserRequestedStop = true }
+assert(!cancelledOrphanStop && !orphanUserRequestedStop && orphanStopEvents == ["cancel"], "Cancelling orphan cleanup must not leave stale stop suppression")
+assert(actionsSource.contains("if OrphanProxyStop.run("), "The IA orphan stop path must use the confirmed-stop decision")
+
+// IA-only orphan cleanup and restart must ignore an unrelated healthy HTTP
+// listener. The original combined-port startup path remains the default.
+let iaOnlyPorts = PortContentionScope.ports(iaPort: "2222", httpProxyPort: "8687", httpProxyEnabled: true, onlyPort: "2222")
+assert(iaOnlyPorts == ["2222"], "IA confirmation must describe only the IA port when scoped")
+var scopedPortChecks: [String] = []
+let iaOnlyRemaining = PortContentionScope.remainingPids(
+    onlyPort: "2222",
+    checkAll: { [4040] }, // the normal HTTP listener must not abort IA cleanup
+    checkPort: { port in scopedPortChecks.append(port); return [] }
+)
+assert(iaOnlyRemaining.isEmpty && scopedPortChecks == ["2222"], "IA post-kill verification must check only the IA port")
+let combinedPorts = PortContentionScope.ports(iaPort: "2222", httpProxyPort: "8687", httpProxyEnabled: true, onlyPort: nil)
+assert(combinedPorts == ["2222", "8687"], "Unscoped startup contention must retain both configured ports")
+let iaOnlyWithoutHTTP = PortContentionScope.ports(iaPort: "2222", httpProxyPort: "8687", httpProxyEnabled: false, onlyPort: nil)
+assert(iaOnlyWithoutHTTP == ["2222"])
+var combinedCheckCalled = false
+let combinedRemaining = PortContentionScope.remainingPids(
+    onlyPort: nil,
+    checkAll: { combinedCheckCalled = true; return [4040] },
+    checkPort: { _ in [] }
+)
+assert(combinedRemaining == [4040] && combinedCheckCalled, "Unscoped post-kill verification must retain the combined check")
+assert(actionsSource.contains("showPortContentionDialog(pids: socksPids, port: configuration.teleport.localPort)"), "IA startup contention must use the IA-only dialog scope")
+assert(actionsSource.contains("self.showPortContentionDialog(pids: stalePids, port: configuration.teleport.localPort)"), "IA orphan cleanup must use the IA-only dialog scope")
+
+// Connections may be refreshed after the menu was last built. Rebuild from the
+// latest snapshots immediately before display so orphaned listeners are usable.
+let lateOrphanListener = ConnectionSnapshot(name: "Teleport SOCKS", port: "2222", listening: true, sessions: [], available: true)
+assert(!ProxyMenuEnablement.canControl(processRunning: false, connections: [], port: "2222"))
+assert(ProxyMenuEnablement.canControl(processRunning: false, connections: [lateOrphanListener], port: "2222"), "A late-appearing orphan listener must enable Stop and Restart")
+assert(ProxyMenuEnablement.canControl(processRunning: true, connections: [], port: "2222"), "A managed running process must remain controllable without a listener snapshot")
+let advancedMenuBody = managerSource.components(separatedBy: "internal func showAdvancedMenu() {")[1]
+    .components(separatedBy: "\n    internal func openDashboard")[0]
+guard let menuRefreshRange = advancedMenuBody.range(of: "rebuildMenu()") else {
+    fatalError("Advanced menu must rebuild immediately before display")
+}
+guard let menuDisplayRange = advancedMenuBody.range(of: "menu.popUp(") else {
+    fatalError("Advanced menu display call missing")
+}
+assert(menuRefreshRange.lowerBound < menuDisplayRange.lowerBound, "Advanced menu state must refresh before it is displayed")
+assert(HTTPProxyCommand.arguments(httpPort: "8687", socksPort: "2222") == ["-p", "8687", "-s", "127.0.0.1:2222"])
+let httpGUIEnvironment = HTTPProxyCommand.environment(base: ["PATH": "/usr/bin:/bin"], home: "/Users/test", executablePath: "/opt/homebrew/bin/hpts")
+assert(httpGUIEnvironment["PATH"] == "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin", "GUI launches must find Homebrew's node for the hpts shebang")
+assert(httpGUIEnvironment["HOME"] == "/Users/test")
+let httpExistingEnvironment = HTTPProxyCommand.environment(base: ["PATH": "/opt/homebrew/bin:/usr/bin:/bin", "OTHER": "preserved"], home: "/Users/test", executablePath: "/opt/homebrew/bin/hpts")
+assert(httpExistingEnvironment["PATH"] == "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin", "Existing Homebrew paths must not be duplicated")
+assert(httpExistingEnvironment["OTHER"] == "preserved")
+let httpCustomEnvironment = HTTPProxyCommand.environment(base: ["PATH": "/usr/bin:/bin"], home: "/Users/test", executablePath: "/Users/test/bin/hpts")
+assert(httpCustomEnvironment["PATH"] == "/Users/test/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin", "The user-configured executable directory must be preserved")
+assert(operationsSource.contains("ProxyControlRow"), "Outbound listeners need visible lifecycle controls")
 try? FileManager.default.removeItem(at: tailTimeoutScript)
 try? FileManager.default.removeItem(at: tailAuthScript)
 assert(RemoteCommands.endpoint(in: "https://valid-name.trycloudflare.com \n", provider: .cloudflare)?.host == "valid-name.trycloudflare.com")
@@ -577,6 +751,17 @@ assert(dirProblem == .directory(path: pkg, suggestion: pkg + "/bin/hpts.js"))
 assert(dirProblem.remedy == .useInstead(path: pkg + "/bin/hpts.js"))
 assert(!dirProblem.explanation.lowercased().contains("permission denied"))
 
+// The maintained @dyneconllc/hpts package wins over a lingering upstream install.
+let maintainedPkg = "/opt/homebrew/lib/node_modules/@dyneconllc/hpts"
+let bothInstalled = fakeProbe([
+    maintainedPkg + "/bin/hpts.js": (true, false, true),
+    "/opt/homebrew/lib/node_modules/http-proxy-to-socks/bin/hpts.js": (true, false, true)
+])
+guard case .problem(let maintainedProblem) = HttpProxyExecutable.resolve(configuredPath: "/gone/hpts", probe: bothInstalled) else {
+    fatalError("expected a problem for a stale path with two packages installed")
+}
+assert(maintainedProblem.remedy == .useInstead(path: maintainedPkg + "/bin/hpts.js"))
+
 // Present but not executable -> offer chmod, not a permission lecture.
 let notExec = fakeProbe(["/usr/local/bin/hpts": (true, false, false)])
 guard case .problem(let bitProblem) = HttpProxyExecutable.resolve(configuredPath: "/usr/local/bin/hpts", probe: notExec) else {
@@ -590,7 +775,9 @@ guard case .problem(let missing) = HttpProxyExecutable.resolve(configuredPath: "
     fatalError("expected a problem for a missing program")
 }
 assert(missing == .missing(path: "/nope/hpts"))
-if case .install = missing.remedy {} else { fatalError("expected install remedy") }
+guard case .install(let installCommand) = missing.remedy else { fatalError("expected install remedy") }
+assert(installCommand.contains("@dyneconllc/hpts"))
+assert(!installCommand.contains("npm install -g http-proxy-to-socks"))
 
 // Missing path but a working hpts elsewhere -> suggest it rather than giving up.
 let elsewhere = fakeProbe(["/opt/homebrew/bin/hpts": (true, false, true)])

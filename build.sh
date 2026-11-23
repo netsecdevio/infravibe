@@ -7,8 +7,8 @@ SIGNING_IDENTITY="Developer ID Application: Doug Dowenr (J77629PP5S)"
 KEYCHAIN_PROFILE="InfraProxy"   # local notarytool credential alias on the build Mac; not shipped, not renamed
 BUNDLE_ID="com.dynadobe.infravibe"
 ENTITLEMENTS="infravibe.entitlements"
-APP_VERSION="2.13.0"
-APP_BUILD="18"
+APP_VERSION="2.13.1"
+APP_BUILD="19"
 SPARKLE_FEED="https://github.com/netsecdevio/infravibe/releases/latest/download/appcast.xml"
 
 # Parse arguments

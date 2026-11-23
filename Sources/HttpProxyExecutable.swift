@@ -4,7 +4,7 @@ import Foundation
 ///
 /// The configured path is user-supplied and commonly points at something that
 /// cannot be executed -- most often the npm *package directory*
-/// (`/opt/homebrew/lib/node_modules/http-proxy-to-socks`) rather than the
+/// (`/opt/homebrew/lib/node_modules/@dyneconllc/hpts`) rather than the
 /// `hpts` launcher inside it. `Process.run()` reports those cases as
 /// "you don't have permission", which reads like a macOS privacy prompt the
 /// user is supposed to approve. There is nothing to approve: the path is
@@ -45,7 +45,7 @@ enum HttpProxyExecutable {
             case .directory(_, .some(let suggestion)):
                 return .useInstead(path: suggestion)
             case .missing, .directory:
-                return .install(command: "brew install node && npm install -g http-proxy-to-socks")
+                return .install(command: "brew install node && npm install -g @dyneconllc/hpts")
             case .notExecutable(let path):
                 return .makeExecutable(path: path)
             }
@@ -67,9 +67,15 @@ enum HttpProxyExecutable {
     }
 
     /// Directories searched for a working `hpts` when the configured path fails.
+    ///
+    /// The maintained `@dyneconllc/hpts` package is preferred; the abandoned
+    /// `http-proxy-to-socks` paths stay as a fallback for machines that still
+    /// have the old global install.
     static let searchPaths = [
         "/opt/homebrew/bin/hpts",
         "/usr/local/bin/hpts",
+        "/opt/homebrew/lib/node_modules/@dyneconllc/hpts/bin/hpts.js",
+        "/usr/local/lib/node_modules/@dyneconllc/hpts/bin/hpts.js",
         "/opt/homebrew/lib/node_modules/http-proxy-to-socks/bin/hpts.js",
         "/usr/local/lib/node_modules/http-proxy-to-socks/bin/hpts.js"
     ]
@@ -127,5 +133,24 @@ enum HttpProxyExecutable {
         var isDirectory: ObjCBool = false
         let exists = manager.fileExists(atPath: path, isDirectory: &isDirectory)
         return (exists, isDirectory.boolValue, exists && manager.isExecutableFile(atPath: path))
+    }
+}
+
+enum HTTPProxyCommand {
+    static func arguments(httpPort: String, socksPort: String) -> [String] {
+        ["-p", httpPort, "-s", "127.0.0.1:" + socksPort]
+    }
+
+    static func environment(base: [String: String], home: String, executablePath: String) -> [String: String] {
+        var environment = base
+        environment["HOME"] = home
+        let executableDirectory = URL(fileURLWithPath: executablePath).deletingLastPathComponent().path
+        let inheritedPaths = base["PATH"]?.components(separatedBy: ":") ?? ["/usr/bin", "/bin"]
+        var seen = Set<String>()
+        let paths = ([executableDirectory, "/opt/homebrew/bin", "/usr/local/bin"] + inheritedPaths).filter {
+            !$0.isEmpty && seen.insert($0).inserted
+        }
+        environment["PATH"] = paths.joined(separator: ":")
+        return environment
     }
 }

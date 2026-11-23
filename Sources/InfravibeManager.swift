@@ -3,20 +3,66 @@ import Foundation
 import UserNotifications
 import SwiftUI
 
-class InfravibeManager: NSObject, ObservableObject {
+enum MenuBarTitleFormatter {
+    static func make(expiryTitle: String?, runningSessions: Int) -> String {
+        var parts: [String] = []
+        if runningSessions > 0 { parts.append(String(runningSessions)) }
+        if let expiryTitle, !expiryTitle.isEmpty { parts.append(expiryTitle) }
+        return parts.isEmpty ? "" : " " + parts.joined(separator: " · ")
+    }
+}
+
+enum MenuPanelDismissal {
+    static func shouldDismiss(eventWindow: NSWindow?, popoverWindow: NSWindow?, statusItemWindow: NSWindow?) -> Bool {
+        guard let eventWindow else { return true }
+        return eventWindow !== popoverWindow && eventWindow !== statusItemWindow
+    }
+}
+
+enum PortContentionScope {
+    static func ports(iaPort: String, httpProxyPort: String, httpProxyEnabled: Bool, onlyPort: String?) -> [String] {
+        if let onlyPort { return [onlyPort] }
+        return [iaPort] + (httpProxyEnabled ? [httpProxyPort] : [])
+    }
+
+    static func remainingPids(onlyPort: String?, checkAll: () -> [Int32], checkPort: (String) -> [Int32]) -> [Int32] {
+        if let onlyPort { return checkPort(onlyPort) }
+        return checkAll()
+    }
+}
+
+enum ProxyMenuEnablement {
+    static func canControl(processRunning: Bool, listenerActive: Bool) -> Bool {
+        processRunning || listenerActive
+    }
+
+    static func canControl(processRunning: Bool, connections: [ConnectionSnapshot], port: String) -> Bool {
+        canControl(
+            processRunning: processRunning,
+            listenerActive: connections.contains { $0.port == port && $0.listening }
+        )
+    }
+}
+
+class InfravibeManager: NSObject, ObservableObject, NSPopoverDelegate {
     internal let remoteAccess = RemoteAccessModel()
     internal let browserKeys = BrowserKeys(authorizedFile: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".ssh/authorized_keys"))
     internal let agentAccess = AgentAccess(file: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/infravibe/AgentAccess.json"))
     internal let browserDashboard = BrowserDashboard()
     private var menuPopover: NSPopover?
+    private var panelGlobalMonitor: Any?
+    private var panelLocalMonitor: Any?
     internal var dashboardWindow: NSWindow?
     internal let operations = OperationsModel()
     internal let appUpdater = AppUpdater()
     private var statusItem: NSStatusItem?
+    private var menuBarExpiryTitle: String?
+    private var runningBrowserSessions = 0
     private var menu: NSMenu!
 
     // Teleport process management
     internal var socksProcess: Process?
+    internal let iaRestartCoordinator = ProxyRestartCoordinator()
     @Published internal var isRunning = false
 
     // Automatic recovery of an unexpectedly dead SOCKS tunnel (sleep/wake,
@@ -29,6 +75,7 @@ class InfravibeManager: NSObject, ObservableObject {
 
     // HTTP Proxy process management
     internal var httpProxyProcess: Process?
+    internal let httpRestartCoordinator = ProxyRestartCoordinator()
     @Published internal var isHttpProxyRunning = false
 
     // Launchctl service management
@@ -123,11 +170,22 @@ class InfravibeManager: NSObject, ObservableObject {
 
     deinit {
         stopStatusRefresh()
+        removePanelDismissalMonitors()
         NSWorkspace.shared.notificationCenter.removeObserver(self)
     }
 
     internal func updateExpiryTitle(_ title: String) {
-        statusItem?.button?.title = operations.expiry == nil ? "" : " " + (title.hasPrefix("Expired") ? "Expired" : title)
+        menuBarExpiryTitle = operations.expiry == nil ? nil : (title.hasPrefix("Expired") ? "Expired" : title)
+        refreshMenuBarTitle()
+    }
+
+    internal func updateBrowserSessionCount(_ count: Int) {
+        runningBrowserSessions = max(0, count)
+        refreshMenuBarTitle()
+    }
+
+    private func refreshMenuBarTitle() {
+        statusItem?.button?.title = MenuBarTitleFormatter.make(expiryTitle: menuBarExpiryTitle, runningSessions: runningBrowserSessions)
     }
 
     // MARK: - Menu Bar Setup
@@ -153,6 +211,7 @@ class InfravibeManager: NSObject, ObservableObject {
         if menuPopover?.isShown == true { closePanel(); return }
         let panel = menuPopover ?? NSPopover()
         panel.behavior = .transient
+        panel.delegate = self
         let host = NSHostingController(rootView: MenuBarPanel(manager: self, operations: operations, remote: remoteAccess))
         // Match VibeTunnel's compact menu width and let content determine height.
         host.sizingOptions = []
@@ -165,12 +224,53 @@ class InfravibeManager: NSObject, ObservableObject {
         operations.refreshStats()
         remoteAccess.refresh()
         panel.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-        panel.contentViewController?.view.window?.makeKey()
+        installPanelDismissalMonitors()
     }
-    internal func closePanel() { menuPopover?.performClose(nil) }
+    internal func closePanel() {
+        removePanelDismissalMonitors()
+        menu.cancelTracking()
+        let panel = menuPopover
+        let window = panel?.contentViewController?.view.window
+        menuPopover = nil
+        panel?.performClose(nil)
+        window?.orderOut(nil)
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        removePanelDismissalMonitors()
+        menuPopover = nil
+    }
+
+    private func installPanelDismissalMonitors() {
+        removePanelDismissalMonitors()
+        guard let popoverWindow = menuPopover?.contentViewController?.view.window else { return }
+        let statusItemWindow = statusItem?.button?.window
+        panelGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+            guard let self, self.menuPopover?.isShown == true else { return }
+            if MenuPanelDismissal.shouldDismiss(eventWindow: event.window, popoverWindow: popoverWindow, statusItemWindow: statusItemWindow) {
+                self.closePanel()
+            }
+        }
+        panelLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+            guard let self, self.menuPopover?.isShown == true else { return event }
+            if MenuPanelDismissal.shouldDismiss(eventWindow: event.window, popoverWindow: popoverWindow, statusItemWindow: statusItemWindow) {
+                self.closePanel()
+            }
+            return event
+        }
+    }
+
+    private func removePanelDismissalMonitors() {
+        if let panelGlobalMonitor { NSEvent.removeMonitor(panelGlobalMonitor) }
+        if let panelLocalMonitor { NSEvent.removeMonitor(panelLocalMonitor) }
+        panelGlobalMonitor = nil
+        panelLocalMonitor = nil
+    }
+
     internal func showAdvancedMenu() {
         closePanel()
         guard let button = statusItem?.button else { return }
+        rebuildMenu()
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.minY), in: button)
     }
     internal func openDashboard(_ tab: DashboardTab) {
@@ -203,13 +303,14 @@ class InfravibeManager: NSObject, ObservableObject {
         menu.addItem(startItem)
 
         let stopItem = NSMenuItem(title: "Stop IA Proxy", action: #selector(stopProxy), keyEquivalent: "")
+        let iaListenerActive = operations.connections.contains { $0.port == configuration.teleport.localPort && $0.listening }
         stopItem.target = self
-        stopItem.isEnabled = isRunning
+        stopItem.isEnabled = ProxyMenuEnablement.canControl(processRunning: isRunning, listenerActive: iaListenerActive)
         menu.addItem(stopItem)
 
         let restartItem = NSMenuItem(title: "Restart IA Proxy", action: #selector(restartProxy), keyEquivalent: "")
         restartItem.target = self
-        restartItem.isEnabled = isRunning
+        restartItem.isEnabled = ProxyMenuEnablement.canControl(processRunning: isRunning, listenerActive: iaListenerActive)
         menu.addItem(restartItem)
 
         menu.addItem(NSMenuItem.separator())
@@ -244,13 +345,14 @@ class InfravibeManager: NSObject, ObservableObject {
         menu.addItem(startHttpItem)
 
         let stopHttpItem = NSMenuItem(title: "Stop HTTP Proxy", action: #selector(stopHttpProxy), keyEquivalent: "")
+        let httpListenerActive = operations.connections.contains { $0.port == configuration.httpProxy.port && $0.listening }
         stopHttpItem.target = self
-        stopHttpItem.isEnabled = isHttpProxyRunning
+        stopHttpItem.isEnabled = ProxyMenuEnablement.canControl(processRunning: isHttpProxyRunning, listenerActive: httpListenerActive)
         menu.addItem(stopHttpItem)
 
         let restartHttpItem = NSMenuItem(title: "Restart HTTP Proxy", action: #selector(restartHttpProxy), keyEquivalent: "")
         restartHttpItem.target = self
-        restartHttpItem.isEnabled = isHttpProxyRunning
+        restartHttpItem.isEnabled = ProxyMenuEnablement.canControl(processRunning: isHttpProxyRunning, listenerActive: httpListenerActive)
         menu.addItem(restartHttpItem)
 
         menu.addItem(NSMenuItem.separator())
@@ -614,21 +716,22 @@ class InfravibeManager: NSObject, ObservableObject {
         }
     }
 
-    internal func showPortContentionDialog(pids: [Int32]) -> Bool {
+    internal func showPortContentionDialog(pids: [Int32], port: String? = nil) -> Bool {
         let alert = NSAlert()
         alert.messageText = "Port Contention Detected"
 
         var conflictDetails = "The following ports are in use:\n"
-
-        let socksPids = checkPortContentionForPort(configuration.teleport.localPort)
-        if !socksPids.isEmpty {
-            conflictDetails += "• SOCKS Port \(configuration.teleport.localPort): PIDs \(socksPids.map(String.init).joined(separator: ", "))\n"
-        }
-
-        if configuration.httpProxy.enabled {
-            let httpPids = checkPortContentionForPort(configuration.httpProxy.port)
-            if !httpPids.isEmpty {
-                conflictDetails += "• HTTP Port \(configuration.httpProxy.port): PIDs \(httpPids.map(String.init).joined(separator: ", "))\n"
+        let ports = PortContentionScope.ports(
+            iaPort: configuration.teleport.localPort,
+            httpProxyPort: configuration.httpProxy.port,
+            httpProxyEnabled: configuration.httpProxy.enabled,
+            onlyPort: port
+        )
+        for checkedPort in ports {
+            let portPids = checkPortContentionForPort(checkedPort)
+            if !portPids.isEmpty {
+                let label = checkedPort == configuration.teleport.localPort ? "SOCKS" : "HTTP"
+                conflictDetails += "• \(label) Port \(checkedPort): PIDs \(portPids.map(String.init).joined(separator: ", "))\n"
             }
         }
 
@@ -640,7 +743,11 @@ class InfravibeManager: NSObject, ObservableObject {
         let response = alert.runModal()
         if response == .alertFirstButtonReturn {
             killProcesses(pids)
-            return checkPortContention().isEmpty
+            return PortContentionScope.remainingPids(
+                onlyPort: port,
+                checkAll: { self.checkPortContention() },
+                checkPort: { self.checkPortContentionForPort($0) }
+            ).isEmpty
         }
         return false
     }
@@ -1012,6 +1119,10 @@ class InfravibeManager: NSObject, ObservableObject {
                     // tunnel; the user did not. Bring it back.
                     self?.log(.warning, "IA Proxy exited unexpectedly (code \(exitCode)); scheduling auto-restart")
                     self?.attemptAutoRestart()
+                }
+                self?.iaRestartCoordinator.completeTermination {
+                    self?.userRequestedStop = false
+                    self?.startProxy()
                 }
             }
         }
