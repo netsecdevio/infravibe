@@ -54,6 +54,7 @@ class InfravibeManager: NSObject, ObservableObject, NSPopoverDelegate {
     private var panelLocalMonitor: Any?
     private var panelResignObserver: NSObjectProtocol?
     private var panelKeyObserver: NSObjectProtocol?
+    private var panelWindow: NSWindow?
     private var lastPanelClose = Date.distantPast
     internal var dashboardWindow: NSWindow?
     internal let operations = OperationsModel()
@@ -226,7 +227,7 @@ class InfravibeManager: NSObject, ObservableObject, NSPopoverDelegate {
         if Date().timeIntervalSince(lastPanelClose) < 0.25 { return }
         if NSApp.currentEvent?.type == .rightMouseUp { showAdvancedMenu(); return }
         guard let button = statusItem?.button else { return }
-        if menuPopover?.isShown == true { closePanel(); return }
+        if menuPopover?.isShown == true || panelWindow?.isVisible == true { closePanel(); return }
         let panel = menuPopover ?? NSPopover()
         panel.behavior = .transient
         panel.delegate = self
@@ -247,27 +248,43 @@ class InfravibeManager: NSObject, ObservableObject, NSPopoverDelegate {
         // can become key, so the app stays inactive and the popover never resigns key.
         panel.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         NSApp.activate(ignoringOtherApps: true)
+        panelWindow = panel.contentViewController?.view.window
         installPanelDismissalMonitors()
     }
     internal func closePanel() {
         removePanelDismissalMonitors()
         menu.cancelTracking()
-        guard let panel = menuPopover else { return }
-        let window = panel.contentViewController?.view.window
+        // Close through the tracked window as well as the popover: if a previous
+        // performClose ever no-ops, the window would otherwise stay on screen with no
+        // reference left to dismiss it.
+        let panel = menuPopover
+        let window = panelWindow ?? panel?.contentViewController?.view.window
         menuPopover = nil
+        panelWindow = nil
         lastPanelClose = Date()
-        panel.performClose(nil)
+        panel?.performClose(nil)
+        panel?.close()
         window?.orderOut(nil)
+        window?.close()
     }
 
     func popoverDidClose(_ notification: Notification) {
         removePanelDismissalMonitors()
         menuPopover = nil
+        panelWindow = nil
+    }
+
+    func popoverDidShow(_ notification: Notification) {
+        // show() can return before the popover window exists, in which case the install
+        // in togglePanel() bails out and the panel would have no dismissal path at all.
+        // By this callback the window is guaranteed to exist.
+        panelWindow = menuPopover?.contentViewController?.view.window
+        installPanelDismissalMonitors()
     }
 
     private func installPanelDismissalMonitors() {
         removePanelDismissalMonitors()
-        guard let popoverWindow = menuPopover?.contentViewController?.view.window else { return }
+        guard let popoverWindow = panelWindow ?? menuPopover?.contentViewController?.view.window else { return }
         // Clicking anywhere outside the panel makes its window resign key. This is the
         // only dismissal signal that does not depend on the app being active or on
         // accessibility access for a global monitor.
