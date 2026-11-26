@@ -52,6 +52,9 @@ class InfravibeManager: NSObject, ObservableObject, NSPopoverDelegate {
     private var menuPopover: NSPopover?
     private var panelGlobalMonitor: Any?
     private var panelLocalMonitor: Any?
+    private var panelResignObserver: NSObjectProtocol?
+    private var panelKeyObserver: NSObjectProtocol?
+    private var lastPanelClose = Date.distantPast
     internal var dashboardWindow: NSWindow?
     internal let operations = OperationsModel()
     internal let appUpdater = AppUpdater()
@@ -203,9 +206,24 @@ class InfravibeManager: NSObject, ObservableObject, NSPopoverDelegate {
         statusItem?.button?.target = self
         statusItem?.button?.action = #selector(togglePanel)
         statusItem?.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
+
+        // Losing focus must always close the panel. The transient behaviour covers
+        // this in theory, but it only applies once the app has been active, so make
+        // deactivation an explicit dismissal path.
+        panelResignObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.closePanel()
+        }
     }
 
     @objc internal func togglePanel() {
+        // A click on the status item while the panel is open first resigns the popover
+        // window's key status, which closes the panel, and then reaches this action.
+        // Without the guard the same click would immediately reopen it.
+        if Date().timeIntervalSince(lastPanelClose) < 0.25 { return }
         if NSApp.currentEvent?.type == .rightMouseUp { showAdvancedMenu(); return }
         guard let button = statusItem?.button else { return }
         if menuPopover?.isShown == true { closePanel(); return }
@@ -223,16 +241,22 @@ class InfravibeManager: NSObject, ObservableObject, NSPopoverDelegate {
         menuPopover = panel
         operations.refreshStats()
         remoteAccess.refresh()
+        // A .transient popover only dismisses itself while its app is active, and an
+        // accessory app is not active when its status item is clicked. Activation must
+        // happen after show(): before the popover window exists there is no window that
+        // can become key, so the app stays inactive and the popover never resigns key.
         panel.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        NSApp.activate(ignoringOtherApps: true)
         installPanelDismissalMonitors()
     }
     internal func closePanel() {
         removePanelDismissalMonitors()
         menu.cancelTracking()
-        let panel = menuPopover
-        let window = panel?.contentViewController?.view.window
+        guard let panel = menuPopover else { return }
+        let window = panel.contentViewController?.view.window
         menuPopover = nil
-        panel?.performClose(nil)
+        lastPanelClose = Date()
+        panel.performClose(nil)
         window?.orderOut(nil)
     }
 
@@ -244,6 +268,16 @@ class InfravibeManager: NSObject, ObservableObject, NSPopoverDelegate {
     private func installPanelDismissalMonitors() {
         removePanelDismissalMonitors()
         guard let popoverWindow = menuPopover?.contentViewController?.view.window else { return }
+        // Clicking anywhere outside the panel makes its window resign key. This is the
+        // only dismissal signal that does not depend on the app being active or on
+        // accessibility access for a global monitor.
+        panelKeyObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification,
+            object: popoverWindow,
+            queue: .main
+        ) { [weak self] _ in
+            self?.closePanel()
+        }
         let statusItemWindow = statusItem?.button?.window
         panelGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
             guard let self, self.menuPopover?.isShown == true else { return }
@@ -263,8 +297,10 @@ class InfravibeManager: NSObject, ObservableObject, NSPopoverDelegate {
     private func removePanelDismissalMonitors() {
         if let panelGlobalMonitor { NSEvent.removeMonitor(panelGlobalMonitor) }
         if let panelLocalMonitor { NSEvent.removeMonitor(panelLocalMonitor) }
+        if let panelKeyObserver { NotificationCenter.default.removeObserver(panelKeyObserver) }
         panelGlobalMonitor = nil
         panelLocalMonitor = nil
+        panelKeyObserver = nil
     }
 
     internal func showAdvancedMenu() {
